@@ -16,6 +16,7 @@ add_compile_options(-fPIC)
 
 set(NATIVEGLOBALIZATION_SOURCES
     casing.cpp
+    collation.cpp
     idna.cpp
     normalization.cpp
 )
