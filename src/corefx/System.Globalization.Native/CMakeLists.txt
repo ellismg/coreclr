@@ -12,6 +12,12 @@ if(ICUUC STREQUAL ICUUC-NOTFOUND)
     return()
 endif()
 
+find_library(ICUI18N NAMES icui18n)
+if(ICUI18N STREQUAL ICUI18N-NOTFOUND)
+    message(WARNING "Cannot find libicui18n, skipping build for System.Globalization.Native. .NET globalization is not expected to function. Try installing libicu-dev (or the appropriate package for your platform)")
+    return()
+endif()
+
 add_compile_options(-fPIC)
 
 set(NATIVEGLOBALIZATION_SOURCES
@@ -31,6 +37,7 @@ set_target_properties(System.Globalization.Native PROPERTIES PREFIX "")
 
 target_link_libraries(System.Globalization.Native
   ${ICUUC}
+  ${ICUI18N}
 )
 
 install (TARGETS System.Globalization.Native DESTINATION .)
