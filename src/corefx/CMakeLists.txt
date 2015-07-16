@@ -12,5 +12,6 @@
 # System.Diagnostics.Process.dll).
 
 if(CLR_CMAKE_PLATFORM_UNIX)
+  add_subdirectory(System.Globalization.Native)
   add_subdirectory(System.Security.Cryptography.Native)
 endif(CLR_CMAKE_PLATFORM_UNIX)
