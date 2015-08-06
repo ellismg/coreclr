@@ -37,6 +37,7 @@ UCollator* GetCollatorForLocaleAndOptions(const char* lpLocaleName, int32_t opti
     return pColl;
 }
 
+
 /*
 Function:
 CompareString
@@ -109,7 +110,7 @@ extern "C" int32_t LastIndexOf(const char* lpLocaleName, const UChar* lpTarget, 
 }
 
 /*
- Return value is a "BOOL" (1 = true, 0 = false)
+ Return value is a "Win32 BOOL" (1 = true, 0 = false)
  */
 extern "C" int32_t EndsWith(const char* lpLocaleName, const UChar* lpTarget, const UChar* lpSource, int32_t cwSourceLength, int32_t options)
 {
@@ -159,6 +160,11 @@ extern "C" int32_t GetSortKey(const char* lpLocaleName, const UChar* lpStr, int3
 
 extern "C" int32_t CompareStringOrdinalIgnoreCase(const UChar* lpStr1, int32_t cwStr1Length, const UChar* lpStr2, int32_t cwStr2Length)
 {
+    assert(lpStr1 != nullptr);
+    assert(cwStr1Length >= 0);
+    assert(lpStr2 != nullptr);
+    assert(cwStr2Length >= 0);
+
     int32_t str1Idx = 0;
     int32_t str2Idx = 0;
 
@@ -188,3 +194,92 @@ extern "C" int32_t CompareStringOrdinalIgnoreCase(const UChar* lpStr1, int32_t c
 
     return 0;
 }
+
+/*
+Function:
+IsOrdianlPrefix
+
+A helper function for IndexOfOrdinal and LastIndexOfOrdianl.  This method detects if the source
+string starts with the value string, comparing ordinally and optionally ignoring case.
+*/
+bool IsOrdinalPrefix(const UChar* source, int32_t sourceIndex, int32_t sourceLength, const UChar* value, int32_t valueLength, int32_t ignoreCase)
+{
+    assert(source != nullptr);
+    assert(value != nullptr);
+    assert(valueLength > 0);
+    assert(sourceLength > 0);
+    assert(sourceIndex >= 0 && sourceIndex < sourceLength);
+
+    int32_t valueIndex = 0;
+
+    while (sourceIndex < sourceLength && valueIndex < valueLength)
+    {
+        UChar32 s;
+        UChar32 v;
+
+        U16_NEXT(source, sourceIndex, sourceLength, s);
+        U16_NEXT(value, valueIndex, valueLength, v);
+
+        if ( !(s == v || (ignoreCase && (u_toupper(s) == u_toupper(v)))))
+        {
+            return false;
+        }
+    }
+
+    return valueIndex == valueLength;
+}
+
+extern "C" int32_t IndexOfOrdinal(const UChar* source, int32_t sourceLength, const UChar* value, int32_t valueLength, int32_t ignoreCase)
+{
+    assert(source != nullptr);
+    assert(value != nullptr);
+    assert(valueLength > 0);
+    assert(sourceLength > 0);
+
+    int32_t sourceIndex = 0;
+
+    while (sourceIndex < sourceLength)
+    {
+        if (IsOrdinalPrefix(source, sourceIndex, sourceLength, value, valueLength, ignoreCase))
+        {
+            return sourceIndex;
+        }
+
+        U16_FWD_1(source, sourceIndex, sourceLength);
+    }
+
+    return -1;
+}
+
+extern "C" int32_t LastIndexOfOrdinal(const UChar* source, int32_t sourceLength, const UChar* value, int32_t valueLength, int32_t ignoreCase)
+{
+    assert(source != nullptr);
+    assert(value != nullptr);
+    assert(valueLength > 0);
+    assert(sourceLength > 0);
+
+    int32_t sourceIndex = sourceLength - valueLength;
+
+    if (sourceIndex >= 0)
+    {
+        while (true)
+        {
+            if (IsOrdinalPrefix(source, sourceIndex, sourceLength, value, valueLength, ignoreCase))
+            {
+                return sourceIndex;
+            }
+
+            // U16_BACK_1 does not move the cursor when index is at 0, so we use this pattern instead
+            // of having the while loop above be conditional on sourceIndex >= 0
+            if (sourceIndex == 0)
+            {
+                break;
+            }
+
+            U16_BACK_1(source, sourceIndex, sourceLength);
+        }
+    }
+
+    return -1;
+}
+
