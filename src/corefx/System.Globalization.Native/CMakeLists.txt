@@ -17,6 +17,9 @@ add_compile_options(-fPIC)
 set(NATIVEGLOBALIZATION_SOURCES
     casing.cpp
     idna.cpp
+    locale.cpp
+    localeNumberData.cpp
+    localeStringData.cpp
     normalization.cpp
 )
 
@@ -30,6 +33,7 @@ set_target_properties(System.Globalization.Native PROPERTIES PREFIX "")
 
 target_link_libraries(System.Globalization.Native
   ${ICUUC}
+  ${ICUI18N}
 )
 
 install (TARGETS System.Globalization.Native DESTINATION .)
