@@ -1727,6 +1727,8 @@ void Lowering::LowerFastTailCall(GenTreeCall *call)
                     }
 
                     lcl->SetLclNum(tmpLclNum);
+                    lcl->SetOper(GT_LCL_VAR);
+
                 }                
             }
         }
@@ -3404,6 +3406,11 @@ bool Lowering::IndirsAreEquivalent(GenTreePtr candidate, GenTreePtr storeInd)
     unsigned        kind;
 
     if (pTreeA->OperGet() != pTreeB->OperGet())
+        return false;
+
+    assert(genActualType(candidate->gtType) == genActualType(storeInd->gtType));
+
+    if (genTypeSize(candidate->gtType) != genTypeSize(storeInd->gtType))
         return false;
 
     oper = pTreeA->OperGet();

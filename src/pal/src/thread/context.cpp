@@ -13,8 +13,8 @@ Module Name:
 
 Abstract:
 
-    Implementation of GetThreadContext/SetThreadContext/DebugBreak functions for
-    the Intel x86 platform. These functions are processor dependent.
+    Implementation of GetThreadContext/SetThreadContext/DebugBreak.
+    There are a lot of architecture specifics here.
 
 
 
@@ -39,6 +39,10 @@ extern void CONTEXT_CaptureContext(LPCONTEXT lpContext);
 #define CONTEXT_ALL_FLOATING (CONTEXT_FLOATING_POINT | CONTEXT_EXTENDED_REGISTERS)
 #elif defined(_AMD64_)
 #define CONTEXT_ALL_FLOATING CONTEXT_FLOATING_POINT
+#elif defined(_ARM_)
+#define CONTEXT_ALL_FLOATING CONTEXT_FLOATING_POINT
+#elif defined(_ARM64_)
+#define CONTEXT_ALL_FLOATING CONTEXT_FLOATING_POINT
 #else
 #error Unexpected architecture.
 #endif
@@ -53,7 +57,7 @@ extern void CONTEXT_CaptureContext(LPCONTEXT lpContext);
 #include <asm/ptrace.h>
 #endif  // HAVE_PT_REGS
 
-#ifdef BIT64
+#ifdef _AMD64_
 #define ASSIGN_CONTROL_REGS \
         ASSIGN_REG(Rbp)     \
         ASSIGN_REG(Rip)     \
@@ -77,7 +81,7 @@ extern void CONTEXT_CaptureContext(LPCONTEXT lpContext);
         ASSIGN_REG(R14)     \
         ASSIGN_REG(R15)     \
 
-#else // BIT64
+#elif defined(_X86_)
 #define ASSIGN_CONTROL_REGS \
         ASSIGN_REG(Ebp)     \
         ASSIGN_REG(Eip)     \
@@ -94,7 +98,67 @@ extern void CONTEXT_CaptureContext(LPCONTEXT lpContext);
         ASSIGN_REG(Ecx)     \
         ASSIGN_REG(Eax)     \
 
-#endif //BIT64
+#elif defined(_ARM_)
+#define ASSIGN_CONTROL_REGS \
+        ASSIGN_REG(Sp)     \
+        ASSIGN_REG(Lr)     \
+        ASSIGN_REG(Pc)   \
+        ASSIGN_REG(Cpsr)  \
+
+#define ASSIGN_INTEGER_REGS \
+        ASSIGN_REG(R0)     \
+        ASSIGN_REG(R1)     \
+        ASSIGN_REG(R2)     \
+        ASSIGN_REG(R3)     \
+        ASSIGN_REG(R4)     \
+        ASSIGN_REG(R5)     \
+        ASSIGN_REG(R6)     \
+        ASSIGN_REG(R7)     \
+        ASSIGN_REG(R8)     \
+        ASSIGN_REG(R9)     \
+        ASSIGN_REG(R10)     \
+        ASSIGN_REG(R11)     \
+        ASSIGN_REG(R12)
+#elif defined(_ARM64_)
+#define ASSIGN_CONTROL_REGS \
+        ASSIGN_REG(Sp)      \
+        ASSIGN_REG(Lr)      \
+        ASSIGN_REG(Pc)
+
+#define ASSIGN_INTEGER_REGS \
+	ASSIGN_REG(X0)      \
+	ASSIGN_REG(X1)      \
+	ASSIGN_REG(X2)      \
+	ASSIGN_REG(X3)      \
+	ASSIGN_REG(X4)      \
+	ASSIGN_REG(X5)      \
+	ASSIGN_REG(X6)      \
+	ASSIGN_REG(X7)      \
+	ASSIGN_REG(X8)      \
+	ASSIGN_REG(X9)      \
+	ASSIGN_REG(X10)     \
+	ASSIGN_REG(X11)     \
+	ASSIGN_REG(X12)     \
+	ASSIGN_REG(X13)     \
+	ASSIGN_REG(X14)     \
+	ASSIGN_REG(X15)     \
+	ASSIGN_REG(X16)     \
+	ASSIGN_REG(X17)     \
+	ASSIGN_REG(X18)     \
+	ASSIGN_REG(X19)     \
+	ASSIGN_REG(X20)     \
+	ASSIGN_REG(X21)     \
+	ASSIGN_REG(X22)     \
+	ASSIGN_REG(X23)     \
+	ASSIGN_REG(X24)     \
+	ASSIGN_REG(X25)     \
+	ASSIGN_REG(X26)     \
+	ASSIGN_REG(X27)     \
+	ASSIGN_REG(X28)
+
+#else
+#error Don't know how to assign registers on this architecture
+#endif
 
 #define ASSIGN_ALL_REGS     \
         ASSIGN_CONTROL_REGS \
@@ -178,6 +242,10 @@ BOOL CONTEXT_GetRegisters(DWORD processId, ucontext_t *registers)
 #define ASSIGN_REG(reg) MCREG_##reg(registers->uc_mcontext) = PTREG_##reg(ptrace_registers);
 #elif HAVE_BSD_REGS_T
 #define ASSIGN_REG(reg) MCREG_##reg(registers->uc_mcontext) = BSDREG_##reg(ptrace_registers);
+#else
+#define ASSIGN_REG(reg)
+	ASSERT("Don't know how to get the context of another process on this platform!");
+	return bRet;
 #endif
         ASSIGN_ALL_REGS
 #undef ASSIGN_REG
@@ -329,6 +397,10 @@ CONTEXT_SetThreadContext(
 #define ASSIGN_REG(reg) PTREG_##reg(ptrace_registers) = lpContext->reg;
 #elif HAVE_BSD_REGS_T
 #define ASSIGN_REG(reg) BSDREG_##reg(ptrace_registers) = lpContext->reg;
+#else
+#define ASSIGN_REG(reg)
+	ASSERT("Don't know how to set the context of another process on this platform!");
+	return FALSE;
 #endif
         if (lpContext->ContextFlags & CONTEXT_CONTROL)
         {
@@ -390,6 +462,7 @@ void CONTEXTToNativeContext(CONST CONTEXT *lpContext, native_context_t *native)
 
     if ((lpContext->ContextFlags & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT)
     {
+#ifdef _AMD64_
         FPREG_ControlWord(native) = lpContext->FltSave.ControlWord;
         FPREG_StatusWord(native) = lpContext->FltSave.StatusWord;
         FPREG_TagWord(native) = lpContext->FltSave.TagWord;
@@ -402,13 +475,14 @@ void CONTEXTToNativeContext(CONST CONTEXT *lpContext, native_context_t *native)
 
         for (int i = 0; i < 8; i++)
         {
-            FPREG_St(native, i) = lpContext->FltSave.FloatRegisters[i];
+            FPREG_St(native, i) = ((M128U*)lpContext->FltSave.FloatRegisters)[i];
         }
 
         for (int i = 0; i < 16; i++)
         {
-            FPREG_Xmm(native, i) = lpContext->FltSave.XmmRegisters[i];
-        }        
+            FPREG_Xmm(native, i) = ((M128U*)lpContext->FltSave.XmmRegisters)[i];
+        }
+#endif
     }
 }
 
@@ -447,6 +521,7 @@ void CONTEXTFromNativeContext(const native_context_t *native, LPCONTEXT lpContex
     
     if ((contextFlags & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT)
     {
+#ifdef _AMD64_
         lpContext->FltSave.ControlWord = FPREG_ControlWord(native);
         lpContext->FltSave.StatusWord = FPREG_StatusWord(native);
         lpContext->FltSave.TagWord = FPREG_TagWord(native);
@@ -459,13 +534,14 @@ void CONTEXTFromNativeContext(const native_context_t *native, LPCONTEXT lpContex
 
         for (int i = 0; i < 8; i++)
         {
-            lpContext->FltSave.FloatRegisters[i] = FPREG_St(native, i);
+            ((M128U*)lpContext->FltSave.FloatRegisters)[i] = FPREG_St(native, i);
         }
 
         for (int i = 0; i < 16; i++)
         {
-            lpContext->FltSave.XmmRegisters[i] = FPREG_Xmm(native, i);
-        }        
+            ((M128U*)lpContext->FltSave.XmmRegisters)[i] = FPREG_Xmm(native, i);
+        }
+#endif
     }
 }
 
@@ -484,11 +560,17 @@ Return value :
 --*/
 LPVOID CONTEXTGetPC(const native_context_t *context)
 {
-#ifdef BIT64
+#ifdef _AMD64_
     return (LPVOID)MCREG_Rip(context->uc_mcontext);
-#else
+#elif defined(_X86_)
     return (LPVOID) MCREG_Eip(context->uc_mcontext);
-#endif // BIT64
+#elif defined(_ARM_)
+    return (LPVOID) MCREG_Pc(context->uc_mcontext);
+#elif defined(_ARM64_)
+    return (LPVOID) MCREG_Pc(context->uc_mcontext);
+#else
+#   error implement me for this architecture
+#endif
 }
 
 /*++
@@ -738,7 +820,7 @@ DWORD CONTEXTGetExceptionCodeForSignal(const siginfo_t *siginfo,
 
 #include <mach/message.h>
 #include <mach/thread_act.h>
-#include "../../exception/machexception.h"
+#include "../exception/machexception.h"
 
 /*++
 Function:
@@ -1204,7 +1286,12 @@ See MSDN doc.
 VOID
 DBG_DebugBreak()
 {
+#if defined(_AMD64_) || defined(_X86_)
     __asm__ __volatile__("int $3");
+#elif defined(_ARM_)
+    // This assumes thumb
+    __asm__ __volatile__(".inst.w 0xde01");
+#endif
 }
 
 
@@ -1220,6 +1307,8 @@ DBG_FlushInstructionCache(
                           IN LPCVOID lpBaseAddress,
                           IN SIZE_T dwSize)
 {
-    // Intel x86 hardware has cache coherency, so nothing needs to be done.
+    // Intrinsic should do the right thing across all platforms
+    __builtin___clear_cache((char *)lpBaseAddress, (char *)((INT_PTR)lpBaseAddress + dwSize));
+
     return TRUE;
 }

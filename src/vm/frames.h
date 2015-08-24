@@ -754,7 +754,7 @@ public:
         return VPTR_HOST_VTABLE_TO_TADDR(*(LPVOID*)this);
     }
 
-#ifdef _DEBUG
+#if defined(_DEBUG) && !defined(DACCESS_COMPILE)
     virtual BOOL Protects(OBJECTREF *ppObjectRef)
     {
         LIMITED_METHOD_CONTRACT;
@@ -1891,7 +1891,7 @@ public:
 
     virtual PCODE GetReturnAddress();
 
-    // Retrives pointer to the lowest-addressed argument on
+    // Retrieves pointer to the lowest-addressed argument on
     // the stack. Depending on the calling convention, this
     // may or may not be the first argument.
     TADDR GetPointerToArguments()

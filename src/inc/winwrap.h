@@ -838,7 +838,7 @@ InterlockedCompareExchangePointer (
 
 #endif // _X86_ && _MSC_VER
 
-#ifdef _ARM_
+#if defined(_ARM_) & !defined(FEATURE_PAL)
 //
 // InterlockedCompareExchangeAcquire/InterlockedCompareExchangeRelease is not mapped in SDK to the correct intrinsics. Remove once
 // the SDK definition is fixed (OS Bug #516255)
@@ -849,7 +849,7 @@ InterlockedCompareExchangePointer (
 #define InterlockedCompareExchangeRelease _InterlockedCompareExchange_rel
 #endif
 
-#if defined(_X86_)
+#if defined(_X86_) & !defined(InterlockedIncrement64)
 
 // Interlockedxxx64 that do not have intrinsics are only supported on Windows Server 2003 
 // or higher for X86 so define our own portable implementation

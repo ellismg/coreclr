@@ -139,6 +139,7 @@ typedef enum tagEFaultRepRetVal
 
 #include "pal.h"
 
+#ifndef PAL_STDCPP_COMPAT
 #ifdef __cplusplus
 #ifndef __PLACEMENT_NEW_INLINE
 #define __PLACEMENT_NEW_INLINE
@@ -147,7 +148,8 @@ inline void *__cdecl operator new(size_t, void *_P)
     return (_P);
 }
 #endif // __PLACEMENT_NEW_INLINE
-#endif
+#endif // __cplusplus
+#endif // !PAL_STDCPP_COMPAT
 
 #include <pal_assert.h>
 
@@ -208,6 +210,7 @@ inline void *__cdecl operator new(size_t, void *_P)
 #define NTAPI       __stdcall
 #define WINAPI      __stdcall
 #define CALLBACK    __stdcall
+#define NTSYSAPI
 
 #define _WINNT_
 
@@ -224,11 +227,15 @@ inline void *__cdecl operator new(size_t, void *_P)
 
 #if defined(__GNUC__) && (__GNUC__ == 3 && __GNUC_MINOR__ >= 5 || __GNUC__ > 3)
 #define FIELD_OFFSET(type, field) __builtin_offsetof(type, field)
+#ifndef offsetof
 #define offsetof(type, field) __builtin_offsetof(type, field)
+#endif
 #define PAL_safe_offsetof(type, field) __builtin_offsetof(type, field)
 #else
 #define FIELD_OFFSET(type, field) (((LONG)(LONG_PTR)&(((type *)64)->field)) - 64)
+#ifndef offsetof
 #define offsetof(s,m)          ((size_t)((ptrdiff_t)&(((s *)64)->m)) - 64)
+#endif
 #define PAL_safe_offsetof(s,m) ((size_t)((ptrdiff_t)&(char&)(((s *)64)->m))-64)
 #endif
 
@@ -1386,6 +1393,7 @@ typedef VOID (__stdcall *WAITORTIMERCALLBACK)(PVOID, BOOLEAN);
 #define PROCESSOR_ARCHITECTURE_AMD64            9
 #define PROCESSOR_ARCHITECTURE_IA32_ON_WIN64    10
 #define PROCESSOR_ARCHITECTURE_NEUTRAL          11
+#define PROCESSOR_ARCHITECTURE_ARM64            12
 
 #define PROCESSOR_ARCHITECTURE_UNKNOWN 0xFFFF
 
@@ -1616,7 +1624,45 @@ EXCEPTION_DISPOSITION
     PCONTEXT ContextRecord,
     PVOID DispatcherContext
     );
-    
+
+#if defined(_ARM_)
+
+typedef struct _DISPATCHER_CONTEXT {
+    DWORD ControlPc;
+    DWORD ImageBase;
+    PRUNTIME_FUNCTION FunctionEntry;
+    DWORD EstablisherFrame;
+    DWORD TargetPc;
+    PCONTEXT ContextRecord;
+    PEXCEPTION_ROUTINE LanguageHandler;
+    PVOID HandlerData;
+    PUNWIND_HISTORY_TABLE HistoryTable;
+    DWORD ScopeIndex;
+    BOOLEAN ControlPcIsUnwound;
+    PBYTE  NonVolatileRegisters;
+    DWORD Reserved;
+} DISPATCHER_CONTEXT, *PDISPATCHER_CONTEXT;
+
+#elif defined(_ARM64_)
+
+typedef struct _DISPATCHER_CONTEXT {
+    ULONG64 ControlPc;
+    ULONG64 ImageBase;
+    PRUNTIME_FUNCTION FunctionEntry;
+    ULONG64 EstablisherFrame;
+    ULONG64 TargetPc;
+    PCONTEXT ContextRecord;
+    PEXCEPTION_ROUTINE LanguageHandler;
+    PVOID HandlerData;
+    PUNWIND_HISTORY_TABLE HistoryTable;
+    ULONG64 ScopeIndex;
+    BOOLEAN ControlPcIsUnwound;
+    PBYTE  NonVolatileRegisters;
+    ULONG64 Reserved;
+} DISPATCHER_CONTEXT, *PDISPATCHER_CONTEXT;
+
+#else
+
 typedef struct _DISPATCHER_CONTEXT {
     ULONG64 ControlPc;
     ULONG64 ImageBase;
@@ -1628,6 +1674,8 @@ typedef struct _DISPATCHER_CONTEXT {
     PVOID HandlerData;
     PUNWIND_HISTORY_TABLE HistoryTable;
 } DISPATCHER_CONTEXT, *PDISPATCHER_CONTEXT;
+
+#endif
 
 // #endif // !defined(_TARGET_MAC64)
 

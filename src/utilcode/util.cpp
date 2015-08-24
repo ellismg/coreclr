@@ -263,8 +263,8 @@ HRESULT FakeCoCreateInstanceEx(REFCLSID       rclsid,
     HRESULT hr = S_OK;
 
     // Call the function to get a class factory for the rclsid passed in.
-    ReleaseHolder<IClassFactory> classFactory;
     HModuleHolder hDll;
+    ReleaseHolder<IClassFactory> classFactory;
     IfFailRet(FakeCoCallDllGetClassObject(rclsid, wszDllPath, _IID_IClassFactory, (void**)&classFactory, &hDll));
 
     // Ask the class factory to create an instance of the
@@ -2930,8 +2930,7 @@ void SOViolation(const char *szFunction, const char *szFile, int lineNum, SOViol
                         "\nPlease open a bug against the feature owner.\n"
                         "\nNOTE: You can disable this ASSERT by setting COMPLUS_SOEnableBackoutStackValidation=0.\n"
                         "\nFor details about this feature, see, in a CLR enlistment,\n"
-                        "src\\ndp\\clr\\doc\\OtherDevDocs\\untriaged\\clrdev_web\\SO Guide for CLR Developers.doc\n",
-                            szFunction, szFile, lineNum);
+                        "src\\ndp\\clr\\doc\\OtherDevDocs\\untriaged\\clrdev_web\\SO Guide for CLR Developers.doc\n");
     }
     else 
     {

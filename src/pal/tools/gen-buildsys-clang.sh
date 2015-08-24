@@ -3,12 +3,13 @@
 # This file invokes cmake and generates the build system for gcc.
 #
 
-if [ $# -lt 3 -o $# -gt 4 ]
+if [ $# -lt 4 -o $# -gt 5 ]
 then
   echo "Usage..."
-  echo "gen-buildsys-clang.sh <path to top level CMakeLists.txt> <ClangMajorVersion> <ClangMinorVersion> [build flavor]"
+  echo "gen-buildsys-clang.sh <path to top level CMakeLists.txt> <ClangMajorVersion> <ClangMinorVersion> <Architecture> [build flavor]"
   echo "Specify the path to the top level CMake file - <ProjectK>/src/NDP"
   echo "Specify the clang version to use, split into major and minor version"
+  echo "Specify the target architecture." 
   echo "Optionally specify the build configuration (flavor.) Defaults to DEBUG." 
   exit 1
 fi
@@ -31,14 +32,16 @@ else
     exit 1
 fi
 
+build_arch="$4"
+
 # Possible build types are DEBUG, RELEASE, RELWITHDEBINFO, MINSIZEREL.
 # Default to DEBUG
-if [ -z "$4" ]
+if [ -z "$5" ]
 then
   echo "Defaulting to DEBUG build."
   buildtype="DEBUG"
 else
-  buildtype="$4"
+  buildtype="$5"
 fi
 
 OS=`uname`
@@ -88,8 +91,6 @@ llvm_link="$(locate_llvm_exec link)"
 [[ $? -eq 0 ]] || { echo "Unable to locate llvm-link"; exit 1; }
 llvm_nm="$(locate_llvm_exec nm)"
 [[ $? -eq 0 ]] || { echo "Unable to locate llvm-nm"; exit 1; }
-llvm_ranlib="$(locate_llvm_exec ranlib)"
-[[ $? -eq 0 ]] || { echo "Unable to locate llvm-ranlib"; exit 1; }
 if [ $OS = "Linux" -o $OS = "FreeBSD" -o $OS = "OpenBSD" -o $OS = "NetBSD" ]; then
   llvm_objdump="$(locate_llvm_exec objdump)"
   [[ $? -eq 0 ]] || { echo "Unable to locate llvm-objdump"; exit 1; }
@@ -102,6 +103,14 @@ fi
 if [[ -n "$LLDB_INCLUDE_DIR" ]]; then
     cmake_extra_defines="$cmake_extra_defines -DWITH_LLDB_INCLUDES=$LLDB_INCLUDE_DIR"
 fi
+if [[ -n "$CROSSCOMPILE" ]]; then
+    if ! [[ -n "$ROOTFS_DIR" ]]; then
+        echo "ROOTFS_DIR not set for crosscompile"
+        exit 1
+    fi
+    cmake_extra_defines="$cmake_extra_defines -C $1/cross/$build_arch/tryrun.cmake"
+    cmake_extra_defines="$cmake_extra_defines -DCMAKE_TOOLCHAIN_FILE=$1/cross/$build_arch/toolchain.cmake"
+fi
 
 cmake \
   "-DCMAKE_USER_MAKE_RULES_OVERRIDE=$1/src/pal/tools/clang-compiler-override.txt" \
@@ -109,7 +118,6 @@ cmake \
   "-DCMAKE_LINKER=$llvm_link" \
   "-DCMAKE_NM=$llvm_nm" \
   "-DCMAKE_OBJDUMP=$llvm_objdump" \
-  "-DCMAKE_RANLIB=$llvm_ranlib" \
   "-DCMAKE_BUILD_TYPE=$buildtype" \
   $cmake_extra_defines \
   "$1"

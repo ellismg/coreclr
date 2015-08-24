@@ -45,6 +45,16 @@ Abstract:
 #ifndef __PAL_H__
 #define __PAL_H__
 
+#ifdef PAL_STDCPP_COMPAT
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <string.h>
+#include <errno.h>
+#include <ctype.h>
+#endif
+
 #ifdef  __cplusplus
 extern "C" {
 #endif
@@ -94,6 +104,10 @@ extern "C" {
 #define _M_IA64 64100
 #elif defined(__x86_64__) && !defined(_M_AMD64)
 #define _M_AMD64 100
+#elif defined(__arm__) && !defined(_M_ARM)
+#define _M_ARM 7
+#elif defined(__aarch64__) && !defined(_M_ARM64)
+#define _M_ARM64 1
 #endif
 
 #if defined(_M_IX86) && !defined(_X86_)
@@ -114,6 +128,10 @@ extern "C" {
 #define _IA64_
 #elif defined(_M_AMD64) && !defined(_AMD64_)
 #define _AMD64_
+#elif defined(_M_ARM) && !defined(_ARM_)
+#define _ARM_
+#elif defined(_M_ARM64) && !defined(_ARM64_)
+#define _ARM64_
 #endif
 
 #endif // !_MSC_VER
@@ -190,6 +208,16 @@ extern "C" {
 #define UNALIGNED
 
 #endif // _MSC_VER
+
+#ifndef FORCEINLINE
+#if _MSC_VER < 1200
+#define FORCEINLINE inline
+#else
+#define FORCEINLINE __forceinline
+#endif
+#endif
+
+#ifndef PAL_STDCPP_COMPAT
 
 #ifdef _M_ALPHA
 
@@ -298,6 +326,8 @@ typedef char * va_list;
 
 #endif // __GNUC__
 
+#endif // !PAL_STDCPP_COMPAT
+
 /******************* PAL-Specific Entrypoints *****************************/
 
 #define IsDebuggerPresent PAL_IsDebuggerPresent
@@ -350,6 +380,10 @@ PAL_IsDebuggerPresent();
 #define _UI32_MAX UINT_MAX
 #define _UI32_MIN UINT_MIN
 
+#ifdef PAL_STDCPP_COMPAT
+#undef NULL
+#endif
+
 #ifndef NULL
 #if defined(__cplusplus)
 #define NULL    0
@@ -370,8 +404,8 @@ typedef __int64 time_t;
 #else
 typedef long time_t;
 #endif
-#endif // !PAL_STDCPP_COMPAT
 #define _TIME_T_DEFINED
+#endif // !PAL_STDCPP_COMPAT
 
 #if ENABLE_DOWNLEVEL_FOR_NLS
 #define MAKELCID(lgid, srtid)  ((DWORD)((((DWORD)((WORD  )(srtid))) << 16) |  \
@@ -2710,10 +2744,13 @@ typedef struct _CONTEXT {
 #define CONTEXT_EXCEPTION_REQUEST 0x40000000
 #define CONTEXT_EXCEPTION_REPORTING 0x80000000
 
-typedef struct DECLSPEC_ALIGN(16) _M128A {
+typedef struct _M128U {
     ULONGLONG Low;
     LONGLONG High;
-} M128A, *PM128A;
+} M128U, *PM128U;
+
+// Same as _M128U but aligned to a 16-byte boundary
+typedef DECLSPEC_ALIGN(16) M128U M128A, *PM128A;
 
 typedef struct _XMM_SAVE_AREA32 {
     WORD   ControlWord;
@@ -2939,6 +2976,363 @@ typedef struct _KNONVOLATILE_CONTEXT_POINTERS {
 
 } KNONVOLATILE_CONTEXT_POINTERS, *PKNONVOLATILE_CONTEXT_POINTERS;
 
+#elif defined(_ARM_)
+
+#define CONTEXT_ARM   0x00200000L
+
+// end_wx86
+
+#define CONTEXT_CONTROL (CONTEXT_ARM | 0x1L)
+#define CONTEXT_INTEGER (CONTEXT_ARM | 0x2L)
+#define CONTEXT_FLOATING_POINT  (CONTEXT_ARM | 0x4L)
+#define CONTEXT_DEBUG_REGISTERS (CONTEXT_ARM | 0x8L)
+
+#define CONTEXT_FULL (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT)
+
+#define CONTEXT_ALL (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT | CONTEXT_DEBUG_REGISTERS)
+
+#define CONTEXT_EXCEPTION_ACTIVE 0x8000000L
+#define CONTEXT_SERVICE_ACTIVE 0x10000000L
+#define CONTEXT_EXCEPTION_REQUEST 0x40000000L
+#define CONTEXT_EXCEPTION_REPORTING 0x80000000L
+
+//
+// This flag is set by the unwinder if it has unwound to a call
+// site, and cleared whenever it unwinds through a trap frame.
+// It is used by language-specific exception handlers to help
+// differentiate exception scopes during dispatching.
+//
+
+#define CONTEXT_UNWOUND_TO_CALL 0x20000000
+
+//
+// Specify the number of breakpoints and watchpoints that the OS
+// will track. Architecturally, ARM supports up to 16. In practice,
+// however, almost no one implements more than 4 of each.
+//
+
+#define ARM_MAX_BREAKPOINTS     8
+#define ARM_MAX_WATCHPOINTS     1
+
+typedef struct _NEON128 {
+    ULONGLONG Low;
+    LONGLONG High;
+} NEON128, *PNEON128;
+
+//
+// Context Frame
+//
+//  This frame has a several purposes: 1) it is used as an argument to
+//  NtContinue, 2) it is used to constuct a call frame for APC delivery,
+//  and 3) it is used in the user level thread creation routines.
+//
+//
+// The flags field within this record controls the contents of a CONTEXT
+// record.
+//
+// If the context record is used as an input parameter, then for each
+// portion of the context record controlled by a flag whose value is
+// set, it is assumed that that portion of the context record contains
+// valid context. If the context record is being used to modify a threads
+// context, then only that portion of the threads context is modified.
+//
+// If the context record is used as an output parameter to capture the
+// context of a thread, then only those portions of the thread's context
+// corresponding to set flags will be returned.
+//
+// CONTEXT_CONTROL specifies Sp, Lr, Pc, and Cpsr
+//
+// CONTEXT_INTEGER specifies R0-R12
+//
+// CONTEXT_FLOATING_POINT specifies Q0-Q15 / D0-D31 / S0-S31
+//
+// CONTEXT_DEBUG_REGISTERS specifies up to 16 of DBGBVR, DBGBCR, DBGWVR,
+//      DBGWCR.
+//
+
+typedef struct DECLSPEC_ALIGN(8) _CONTEXT {
+
+    //
+    // Control flags.
+    //
+
+    DWORD ContextFlags;
+
+    //
+    // Integer registers
+    //
+
+    DWORD R0;
+    DWORD R1;
+    DWORD R2;
+    DWORD R3;
+    DWORD R4;
+    DWORD R5;
+    DWORD R6;
+    DWORD R7;
+    DWORD R8;
+    DWORD R9;
+    DWORD R10;
+    DWORD R11;
+    DWORD R12;
+
+    //
+    // Control Registers
+    //
+
+    DWORD Sp;
+    DWORD Lr;
+    DWORD Pc;
+    DWORD Cpsr;
+
+    //
+    // Floating Point/NEON Registers
+    //
+
+    DWORD Fpscr;
+    DWORD Padding;
+    union {
+        NEON128 Q[16];
+        ULONGLONG D[32];
+        DWORD S[32];
+    };
+
+    //
+    // Debug registers
+    //
+
+    DWORD Bvr[ARM_MAX_BREAKPOINTS];
+    DWORD Bcr[ARM_MAX_BREAKPOINTS];
+    DWORD Wvr[ARM_MAX_WATCHPOINTS];
+    DWORD Wcr[ARM_MAX_WATCHPOINTS];
+
+    DWORD Padding2[2];
+
+} CONTEXT, *PCONTEXT, *LPCONTEXT;
+
+//
+// Nonvolatile context pointer record.
+//
+
+typedef struct _KNONVOLATILE_CONTEXT_POINTERS {
+
+    PDWORD R4;
+    PDWORD R5;
+    PDWORD R6;
+    PDWORD R7;
+    PDWORD R8;
+    PDWORD R9;
+    PDWORD R10;
+    PDWORD R11;
+    PDWORD Lr;
+
+    PULONGLONG D8;
+    PULONGLONG D9;
+    PULONGLONG D10;
+    PULONGLONG D11;
+    PULONGLONG D12;
+    PULONGLONG D13;
+    PULONGLONG D14;
+    PULONGLONG D15;
+
+} KNONVOLATILE_CONTEXT_POINTERS, *PKNONVOLATILE_CONTEXT_POINTERS;
+
+typedef struct _IMAGE_ARM_RUNTIME_FUNCTION_ENTRY {
+    DWORD BeginAddress;
+    union {
+        DWORD UnwindData;
+        struct {
+            DWORD Flag : 2;
+            DWORD FunctionLength : 11;
+            DWORD Ret : 2;
+            DWORD H : 1;
+            DWORD Reg : 3;
+            DWORD R : 1;
+            DWORD L : 1;
+            DWORD C : 1;
+            DWORD StackAdjust : 10;
+        };
+    };
+} IMAGE_ARM_RUNTIME_FUNCTION_ENTRY, * PIMAGE_ARM_RUNTIME_FUNCTION_ENTRY;
+
+#elif defined(_ARM64_)
+
+#define CONTEXT_ARM64   0x00400000L
+
+#define CONTEXT_CONTROL (CONTEXT_ARM64 | 0x1L)
+#define CONTEXT_INTEGER (CONTEXT_ARM64 | 0x2L)
+#define CONTEXT_FLOATING_POINT  (CONTEXT_ARM64 | 0x4L)
+#define CONTEXT_DEBUG_REGISTERS (CONTEXT_ARM64 | 0x8L)
+
+#define CONTEXT_FULL (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT)
+
+#define CONTEXT_ALL (CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT | CONTEXT_DEBUG_REGISTERS)
+
+#define CONTEXT_EXCEPTION_ACTIVE 0x8000000L
+#define CONTEXT_SERVICE_ACTIVE 0x10000000L
+#define CONTEXT_EXCEPTION_REQUEST 0x40000000L
+#define CONTEXT_EXCEPTION_REPORTING 0x80000000L
+
+//
+// This flag is set by the unwinder if it has unwound to a call
+// site, and cleared whenever it unwinds through a trap frame.
+// It is used by language-specific exception handlers to help
+// differentiate exception scopes during dispatching.
+//
+
+#define CONTEXT_UNWOUND_TO_CALL 0x20000000
+
+//
+// Define initial Cpsr/Fpscr value
+//
+
+#define INITIAL_CPSR 0x10
+#define INITIAL_FPSCR 0
+
+// begin_ntoshvp
+
+//
+// Specify the number of breakpoints and watchpoints that the OS
+// will track. Architecturally, ARM64 supports up to 16. In practice,
+// however, almost no one implements more than 4 of each.
+//
+
+#define ARM64_MAX_BREAKPOINTS     8
+#define ARM64_MAX_WATCHPOINTS     2
+
+//
+// Context Frame
+//
+//  This frame has a several purposes: 1) it is used as an argument to
+//  NtContinue, 2) it is used to constuct a call frame for APC delivery,
+//  and 3) it is used in the user level thread creation routines.
+//
+//
+// The flags field within this record controls the contents of a CONTEXT
+// record.
+//
+// If the context record is used as an input parameter, then for each
+// portion of the context record controlled by a flag whose value is
+// set, it is assumed that that portion of the context record contains
+// valid context. If the context record is being used to modify a threads
+// context, then only that portion of the threads context is modified.
+//
+// If the context record is used as an output parameter to capture the
+// context of a thread, then only those portions of the thread's context
+// corresponding to set flags will be returned.
+//
+// CONTEXT_CONTROL specifies Sp, Lr, Pc, and Cpsr
+//
+// CONTEXT_INTEGER specifies R0-R12
+//
+// CONTEXT_FLOATING_POINT specifies Q0-Q15 / D0-D31 / S0-S31
+//
+// CONTEXT_DEBUG_REGISTERS specifies up to 16 of DBGBVR, DBGBCR, DBGWVR,
+//      DBGWCR.
+//
+
+typedef struct _NEON128 {
+    ULONGLONG Low;
+    LONGLONG High;
+} NEON128, *PNEON128;
+
+typedef struct DECLSPEC_ALIGN(16) _CONTEXT {
+
+    //
+    // Control flags.
+    //
+
+    /* +0x000 */ DWORD ContextFlags;
+
+    //
+    // Integer registers
+    //
+
+    /* +0x004 */ DWORD Cpsr;       // NZVF + DAIF + CurrentEL + SPSel
+    /* +0x008 */ DWORD64 X0;
+                 DWORD64 X1;
+                 DWORD64 X2;
+                 DWORD64 X3;
+                 DWORD64 X4;
+                 DWORD64 X5;
+                 DWORD64 X6;
+                 DWORD64 X7;
+                 DWORD64 X8;
+                 DWORD64 X9;
+                 DWORD64 X10;
+                 DWORD64 X11;
+                 DWORD64 X12;
+                 DWORD64 X13;
+                 DWORD64 X14;
+                 DWORD64 X15;
+                 DWORD64 X16;
+                 DWORD64 X17;
+                 DWORD64 X18;
+                 DWORD64 X19;
+                 DWORD64 X20;
+                 DWORD64 X21;
+                 DWORD64 X22;
+                 DWORD64 X23;
+                 DWORD64 X24;
+                 DWORD64 X25;
+                 DWORD64 X26;
+                 DWORD64 X27;
+                 DWORD64 X28;
+    /* +0x0f0 */ DWORD64 Fp;
+    /* +0x0f8 */ DWORD64 Lr;
+    /* +0x100 */ DWORD64 Sp;
+    /* +0x108 */ DWORD64 Pc;
+
+    //
+    // Floating Point/NEON Registers
+    //
+
+    /* +0x110 */ NEON128 V[32];
+    /* +0x310 */ DWORD Fpcr;
+    /* +0x314 */ DWORD Fpsr;
+
+    //
+    // Debug registers
+    //
+
+    /* +0x318 */ DWORD Bcr[ARM64_MAX_BREAKPOINTS];
+    /* +0x338 */ DWORD64 Bvr[ARM64_MAX_BREAKPOINTS];
+    /* +0x378 */ DWORD Wcr[ARM64_MAX_WATCHPOINTS];
+    /* +0x380 */ DWORD64 Wvr[ARM64_MAX_WATCHPOINTS];
+    /* +0x390 */
+
+} CONTEXT, *PCONTEXT, *LPCONTEXT;
+
+//
+// Nonvolatile context pointer record.
+//
+
+typedef struct _KNONVOLATILE_CONTEXT_POINTERS {
+
+    PDWORD64 X19;
+    PDWORD64 X20;
+    PDWORD64 X21;
+    PDWORD64 X22;
+    PDWORD64 X23;
+    PDWORD64 X24;
+    PDWORD64 X25;
+    PDWORD64 X26;
+    PDWORD64 X27;
+    PDWORD64 X28;
+    PDWORD64 Fp;
+    PDWORD64 Lr;
+
+    PDWORD64 D8;
+    PDWORD64 D9;
+    PDWORD64 D10;
+    PDWORD64 D11;
+    PDWORD64 D12;
+    PDWORD64 D13;
+    PDWORD64 D14;
+    PDWORD64 D15;
+
+} KNONVOLATILE_CONTEXT_POINTERS, *PKNONVOLATILE_CONTEXT_POINTERS;
+
 #else
 #error Unknown architecture for defining CONTEXT.
 #endif
@@ -3038,6 +3432,13 @@ DWORD
 PALAPI
 PAL_GetLogicalCpuCountFromOS();
 
+PALIMPORT
+size_t
+PALAPI
+PAL_GetLogicalProcessorCacheSizeFromOS();
+
+#define GetLogicalProcessorCacheSizeFromOS PAL_GetLogicalProcessorCacheSizeFromOS
+
 #ifdef PLATFORM_UNIX
 
 #if defined(__FreeBSD__) && defined(_X86_)
@@ -3056,7 +3457,12 @@ PAL_GetLogicalCpuCountFromOS();
 #define PAL_CS_NATIVE_DATA_SIZE 120
 #elif defined(__LINUX__) && defined(__x86_64__)
 #define PAL_CS_NATIVE_DATA_SIZE 96
+#elif defined(__LINUX__) && defined(_ARM_)
+#define PAL_CS_NATIVE_DATA_SIZE 80
+#elif defined(__LINUX__) && defined(_ARM64_)
+#define PAL_CS_NATIVE_DATA_SIZE 116
 #else 
+#warning 
 #error  PAL_CS_NATIVE_DATA_SIZE is not defined for this architecture
 #endif
     
@@ -3375,7 +3781,6 @@ VirtualProtect(
            IN DWORD flNewProtect,
            OUT PDWORD lpflOldProtect);
 
-#if defined(_AMD64_)
 typedef struct _MEMORYSTATUSEX {
   DWORD     dwLength;
   DWORD     dwMemoryLoad;
@@ -3393,8 +3798,6 @@ BOOL
 PALAPI
 GlobalMemoryStatusEx(
             IN OUT LPMEMORYSTATUSEX lpBuffer);
-
-#endif // _AMD64_
 
 typedef struct _MEMORY_BASIC_INFORMATION {
     PVOID BaseAddress;
@@ -5238,10 +5641,11 @@ ReportEventW (
 
 /******************* C Runtime Entrypoints *******************************/
 
-#if defined(PLATFORM_UNIX) && !defined(PAL_STDCPP_COMPAT)
 /* Some C runtime functions needs to be reimplemented by the PAL.
    To avoid name collisions, those functions have been renamed using
    defines */
+#ifdef PLATFORM_UNIX
+#ifndef PAL_STDCPP_COMPAT
 #define exit          PAL_exit
 #define atexit        PAL_atexit
 #define printf        PAL_printf
@@ -5260,17 +5664,17 @@ ReportEventW (
 #define wcsncmp       PAL_wcsncmp
 #define wcschr        PAL_wcschr
 #define wcsrchr       PAL_wcsrchr
+#define wcsstr        PAL_wcsstr
 #define swscanf       PAL_swscanf
 #define wcspbrk       PAL_wcspbrk
-#define wcsstr        PAL_wcsstr
 #define wcscmp        PAL_wcscmp
 #define wcsncat       PAL_wcsncat
 #define wcsncpy       PAL_wcsncpy
 #define wcstok        PAL_wcstok
 #define wcscspn       PAL_wcscspn
+#define iswprint      PAL_iswprint
 #define iswalpha      PAL_iswalpha
 #define iswdigit      PAL_iswdigit
-#define iswprint      PAL_iswprint
 #define iswspace      PAL_iswspace
 #define iswupper      PAL_iswupper
 #define iswxdigit     PAL_iswxdigit
@@ -5339,13 +5743,8 @@ ReportEventW (
 #define _mm_setcsr    PAL__mm_setcsr
 #endif // _AMD64_
 
-#endif /* PLATFORM_UNIX */
-
-#ifdef PLATFORM_UNIX
-   /* Note the TWO underscores. */
-#define _vsnprintf    PAL__vsnprintf
-#define _vsnwprintf   PAL__wvsnprintf
-#endif /* PLATFORM_UNIX */
+#endif // !PAL_STDCPP_COMPAT
+#endif // PLATFORM_UNIX
 
 #ifndef _CONST_RETURN
 #ifdef  __cplusplus
@@ -5363,13 +5762,8 @@ ReportEventW (
 
 typedef int errno_t;
 
-#ifdef PAL_STDCPP_COMPAT
-#include <string.h>
+#ifndef PAL_STDCPP_COMPAT
 
-PALIMPORT int __cdecl PAL__vsnprintf(char *, size_t, const char *, va_list);
-PALIMPORT errno_t __cdecl memcpy_s(void *, size_t, const void *, size_t);
-PALIMPORT errno_t __cdecl memmove_s(void *, size_t, const void *, size_t);
-#else // PAL_STDCPP_COMPAT
 typedef struct {
     int quot;
     int rem;
@@ -5378,17 +5772,14 @@ typedef struct {
 PALIMPORT div_t div(int numer, int denom);
 
 PALIMPORT void * __cdecl memcpy(void *, const void *, size_t);
-PALIMPORT errno_t __cdecl memcpy_s(void *, size_t, const void *, size_t);
 PALIMPORT int    __cdecl memcmp(const void *, const void *, size_t);
 PALIMPORT void * __cdecl memset(void *, int, size_t);
 PALIMPORT void * __cdecl memmove(void *, const void *, size_t);
-PALIMPORT errno_t __cdecl memmove_s(void *, size_t, const void *, size_t);
 PALIMPORT void * __cdecl memchr(const void *, int, size_t);
 
 PALIMPORT size_t __cdecl strlen(const char *);
 PALIMPORT int __cdecl strcmp(const char*, const char *);
 PALIMPORT int __cdecl strncmp(const char*, const char *, size_t);
-PALIMPORT int __cdecl _stricmp(const char *, const char *);
 PALIMPORT int __cdecl _strnicmp(const char *, const char *, size_t);
 PALIMPORT char * __cdecl strcat(char *, const char *);
 PALIMPORT char * __cdecl strncat(char *, const char *, size_t);
@@ -5403,8 +5794,6 @@ PALIMPORT size_t __cdecl strspn(const char *, const char *);
 PALIMPORT size_t  __cdecl strcspn(const char *, const char *);
 PALIMPORT int __cdecl sprintf(char *, const char *, ...);
 PALIMPORT int __cdecl vsprintf(char *, const char *, va_list);
-PALIMPORT int __cdecl _snprintf(char *, size_t, const char *, ...);
-PALIMPORT int __cdecl _vsnprintf(char *, size_t, const char *, va_list);
 PALIMPORT int __cdecl sscanf(const char *, const char *, ...);
 PALIMPORT int __cdecl atoi(const char *);
 PALIMPORT LONG __cdecl atol(const char *);
@@ -5424,7 +5813,11 @@ PALIMPORT int __cdecl toupper(int);
 
 #endif // PAL_STDCPP_COMPAT
 
+PALIMPORT errno_t __cdecl memcpy_s(void *, size_t, const void *, size_t);
+PALIMPORT errno_t __cdecl memmove_s(void *, size_t, const void *, size_t);
 PALIMPORT char * __cdecl _strlwr(char *);
+PALIMPORT int __cdecl _stricmp(const char *, const char *);
+PALIMPORT int __cdecl _snprintf(char *, size_t, const char *, ...);
 PALIMPORT char * __cdecl _gcvt_s(char *, int, double, int);
 PALIMPORT char * __cdecl _ecvt(double, int, int *, int *);
 PALIMPORT int __cdecl __iscsym(int);
@@ -5434,6 +5827,7 @@ PALIMPORT unsigned char * __cdecl _mbsninc(const unsigned char *, size_t);
 PALIMPORT unsigned char * __cdecl _mbsdec(const unsigned char *, const unsigned char *);
 PALIMPORT int __cdecl _wcsicmp(const WCHAR *, const WCHAR*);
 PALIMPORT int __cdecl _wcsnicmp(const WCHAR *, const WCHAR *, size_t);
+PALIMPORT int __cdecl _vsnprintf(char *, size_t, const char *, va_list);
 PALIMPORT int __cdecl _vsnwprintf(WCHAR *, size_t, const WCHAR *, va_list);
 PALIMPORT WCHAR * __cdecl _itow(int, WCHAR *, int);
 
@@ -5497,6 +5891,7 @@ PALIMPORT int __cdecl abs(int);
 PALIMPORT double __cdecl fabs(double); 
 #ifndef PAL_STDCPP_COMPAT
 PALIMPORT LONG __cdecl labs(LONG);
+PALIMPORT double __cdecl fabs(double);
 #endif // !PAL_STDCPP_COMPAT
 // clang complains if this is declared with __int64
 PALIMPORT long long __cdecl llabs(long long);
@@ -5520,7 +5915,6 @@ PALIMPORT double __cdecl fmod(double, double);
 PALIMPORT float __cdecl fmodf(float, float);
 PALIMPORT double __cdecl floor(double);
 PALIMPORT double __cdecl ceil(double);
-PALIMPORT double __cdecl fabs(double);
 PALIMPORT float __cdecl fabsf(float);
 PALIMPORT double __cdecl modf(double, double *);
 PALIMPORT float __cdecl modff(float, float *);
@@ -5529,14 +5923,15 @@ PALIMPORT int __cdecl _finite(double);
 PALIMPORT int __cdecl _isnan(double);
 PALIMPORT double __cdecl _copysign(double, double);
 
+#ifndef PAL_STDCPP_COMPAT
+
 #ifdef __cplusplus
 extern "C++" {
 
-#if defined(BIT64) && !defined(PAL_STDCPP_COMPAT)
 inline __int64 abs(__int64 _X) {
     return llabs(_X);
 }
-#endif // defined(BIT64) && !defined(PAL_STDCPP_COMPAT)
+
 }
 #endif
 
@@ -5564,9 +5959,9 @@ PALIMPORT char * __cdecl _strdup(const char *);
 #define alloca  __builtin_alloca
 #endif // __GNUC__
 
-#ifndef PAL_STDCPP_COMPAT
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define min(a, b) (((a) < (b)) ? (a) : (b))
+
 #endif // !PAL_STDCPP_COMPAT
 
 PALIMPORT PAL_NORETURN void __cdecl exit(int);
@@ -5606,7 +6001,6 @@ PALIMPORT char * __cdecl ctime(const time_t *);
 
 PALIMPORT int __cdecl _open_osfhandle(INT_PTR, int);
 PALIMPORT int __cdecl _close(int);
-
 PALIMPORT int __cdecl _flushall();
 
 #ifdef PAL_STDCPP_COMPAT
@@ -5619,8 +6013,6 @@ typedef struct _PAL_FILE PAL_FILE;
 struct _FILE;
 typedef struct _FILE FILE;
 typedef struct _FILE PAL_FILE;
-#endif // PAL_STDCPP_COMPAT
-
 
 #define SEEK_SET    0
 #define SEEK_CUR    1
@@ -5637,6 +6029,8 @@ typedef struct _FILE PAL_FILE;
 #define _IOFBF  0       /* setvbuf should set fully buffered */
 #define _IOLBF  1       /* setvbuf should set line buffered */
 #define _IONBF  2       /* setvbuf should set unbuffered */
+
+#endif // PAL_STDCPP_COMPAT
 
 PALIMPORT int __cdecl PAL_fclose(PAL_FILE *);
 PALIMPORT void __cdecl PAL_setbuf(PAL_FILE *, char*);
@@ -5673,10 +6067,12 @@ PALIMPORT PAL_FILE * __cdecl _wfsopen(const WCHAR *, const WCHAR *, int);
 
 /* Maximum value that can be returned by the rand function. */
 
+#ifndef PAL_STDCPP_COMPAT
 #define RAND_MAX 0x7fff
+#endif // !PAL_STDCPP_COMPAT
 
-PALIMPORT int    __cdecl rand(void);
-PALIMPORT void   __cdecl srand(unsigned int);
+PALIMPORT int __cdecl rand(void);
+PALIMPORT void __cdecl srand(unsigned int);
 
 PALIMPORT int __cdecl printf(const char *, ...);
 PALIMPORT int __cdecl vprintf(const char *, va_list);
@@ -5701,7 +6097,7 @@ PALIMPORT int * __cdecl PAL_errno(int caller);
 #define stdout (PAL_get_stdout(PAL_get_caller))
 #define stdin  (PAL_get_stdin(PAL_get_caller))
 #define stderr (PAL_get_stderr(PAL_get_caller))
-#define errno   (*PAL_errno(PAL_get_caller))
+#define errno  (*PAL_errno(PAL_get_caller))
 #endif // PAL_STDCPP_COMPAT
 
 PALIMPORT char * __cdecl getenv(const char *);

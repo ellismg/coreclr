@@ -496,7 +496,7 @@ void                CodeGen::inst_RV_IV(instruction  ins,
 #ifndef LEGACY_BACKEND
         // TODO-Cleanup: Add a comment about why this is unreached() for RyuJIT backend.
         unreached();
-#else LEGACY_BACKEND
+#else //LEGACY_BACKEND
         regNumber tmpReg = regSet.rsGrabReg(RBM_ALLINT & ~genRegMask(reg));
         instGen_Set_Reg_To_Imm(size, tmpReg, val);
         getEmitter()->emitIns_R_R(ins, size, reg, tmpReg, flags);
@@ -3890,7 +3890,7 @@ void                CodeGen::instGen_MemoryBarrier()
 #elif defined (_TARGET_ARM_)
     getEmitter()->emitIns_I(INS_dmb, EA_4BYTE, 0xf);
 #elif defined (_TARGET_ARM64_)
-    NYI_ARM64("instGen_MemoryBarrier");
+    getEmitter()->emitIns_BARR(INS_dmb, INS_BARRIER_ST);
 #else
 #error "Unknown _TARGET_"
 #endif

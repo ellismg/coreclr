@@ -1,7 +1,19 @@
-add_definitions(-DSOS_TARGET_AMD64=1)
-add_definitions(-D_TARGET_WIN64_=1)
-add_definitions(-DDBG_TARGET_64BIT)
-add_definitions(-DDBG_TARGET_WIN64=1)
+if(CLR_CMAKE_PLATFORM_ARCH_AMD64)
+  add_definitions(-DSOS_TARGET_AMD64=1)
+  add_definitions(-D_TARGET_WIN64_=1)
+  add_definitions(-DDBG_TARGET_64BIT)
+  add_definitions(-DDBG_TARGET_WIN64=1)
+elseif(CLR_CMAKE_PLATFORM_ARCH_I386)
+  add_definitions(-DSOS_TARGET_X86=1)
+  add_definitions(-D_TARGET_X86_=1)
+  add_definitions(-DDBG_TARGET_32BIT)
+  add_definitions(-DDBG_TARGET_WIN32=1)
+elseif(CLR_CMAKE_PLATFORM_ARCH_ARM)
+  add_definitions(-DSOS_TARGET_ARM=1)
+  add_definitions(-D_TARGET_WIN32_=1)
+  add_definitions(-DDBG_TARGET_32BIT)
+  add_definitions(-DDBG_TARGET_WIN32=1)
+endif()
 add_definitions(-DSTRIKE)  
 
 remove_definitions(-DUNICODE)
@@ -38,12 +50,22 @@ if(WIN32)
     WatchCmd.cpp
     Native.rc
   )
-
-  set(SOS_SOURCES_AMD64
-    disasmX86.cpp
-  )
-
-  list(APPEND SOS_SOURCES ${SOS_SOURCES_AMD64})
+  
+  if(CLR_CMAKE_PLATFORM_ARCH_AMD64)
+      set(SOS_SOURCES_ARCH
+        disasmX86.cpp
+      )
+  elseif(CLR_CMAKE_PLATFORM_ARCH_I386)
+      set(SOS_SOURCES_ARCH 
+        disasmX86.cpp
+      )
+  elseif(CLR_CMAKE_PLATFORM_ARCH_ARM)
+      set(SOS_SOURCES_ARCH
+        disasmARM.cpp
+      )
+  endif()
+  
+  list(APPEND SOS_SOURCES ${SOS_SOURCES_ARCH})
 
   add_definitions(-DFX_VER_INTERNALNAME_STR=SOS.dll)
 
@@ -69,6 +91,10 @@ if(WIN32)
     ntdll.lib
   )
 else(WIN32)
+  add_definitions(-DPAL_STDCPP_COMPAT=1)
+  add_compile_options(-Wno-null-arithmetic)
+  add_compile_options(-Wno-format)
+
   include_directories(../lldbplugin/inc)
   include_directories(BEFORE ${VM_DIR})
   include_directories(${CLR_DIR}/src/debug/shim)

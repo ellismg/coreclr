@@ -43,7 +43,7 @@ You now have all the required components.
 Git Setup
 ---------
 
-This guide assumes that you've cloned the coreclr repository into `~/git/coreclr` on your Linux machine and the corefx and coreclr repositories into `D:\git\corefx` and `D:\git\coreclr` on Windows. If your setup is different, you'll need to pay careful attention to the commands you run. In this guide, I'll always show what directory I'm in on both the Linux and Windows machine.
+This guide assumes that you've cloned the corefx and coreclr repositories into `~/git/corefx` and `~/git/coreclr` on your Linux machine and the corefx and coreclr repositories into `D:\git\corefx` and `D:\git\coreclr` on Windows. If your setup is different, you'll need to pay careful attention to the commands you run. In this guide, I'll always show what directory I'm in on both the Linux and Windows machine.
 
 Build the Runtime
 =================
@@ -67,8 +67,16 @@ ellismg@linux:~/git/coreclr$ cp bin/Product/Linux.x64.Debug/corerun ~/coreclr-de
 ellismg@linux:~/git/coreclr$ cp bin/Product/Linux.x64.Debug/libcoreclr.so ~/coreclr-demo/runtime
 ```
 
-Build the Framework 
-===================
+Build the Framework Native Components
+======================================
+
+```
+ellismg@linux:~/git/corefx$ src/Native/build.sh
+ellismg@linux:~/git/corefx$ cp bin/Linux.x64.Debug/Native/*.so ~/coreclr-demo/runtime
+```
+
+Build the Framework Managed Components
+======================================
 
 We don't _yet_ have support for building managed code on Linux, so you'll need a Windows machine with clones of both the CoreCLR and CoreFX projects.
 
@@ -102,6 +110,13 @@ Download Dependencies
 
 The rest of the assemblies you need to run are presently just facades that point to mscorlib.  We can pull these dependencies down via NuGet (which currently requires Mono).
 
+Create a folder for the packages:
+
+```
+ellismg@linux:~$ mkdir ~/coreclr-demo/packages
+ellismg@linux:~$ cd ~/coreclr-demo/packages
+```
+
 Install Mono
 ------------
 
@@ -127,12 +142,7 @@ ellismg@linux:~/coreclr-demo/packages$ curl -L -O https://nuget.org/nuget.exe
 Download NuGet Packages
 -----------------------
 
-With Mono and NuGet in hand, you can use NuGet to get the required dependencies.  Place all the NuGet packages together:
-
-```
-ellismg@linux:~$ mkdir ~/coreclr-demo/packages
-ellismg@linux:~$ cd ~/coreclr-demo/packages
-```
+With Mono and NuGet in hand, you can use NuGet to get the required dependencies. 
 
 Make a `packages.config` file with the following text. These are the required dependencies of this particular app. Different apps will have different dependencies and require a different `packages.config` - see [Issue #480](https://github.com/dotnet/coreclr/issues/480).
 

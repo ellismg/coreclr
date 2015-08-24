@@ -18,7 +18,7 @@
 // PLEASE READ!
 //
 // There are strict rules for how to implement ICorProfilerInfo* methods.  Please read
-// https://github.com/dotnet/coreclr/blob/master/Documentation/profilability.md
+// https://github.com/dotnet/coreclr/blob/master/Documentation/botr/profilability.md
 // to understand the rules and why they exist.
 //
 // As a reminder, here is a short summary of your responsibilities.  Every PUBLIC
@@ -5656,7 +5656,7 @@ HRESULT ProfToEEInterfaceImpl::GetFunctionFromTokenAndTypeArgs(ModuleID moduleID
 }
 
 //*****************************************************************************
-// Retrive information about a given application domain, which is like a
+// Retrieve information about a given application domain, which is like a
 // sub-process.
 //*****************************************************************************
 HRESULT ProfToEEInterfaceImpl::GetAppDomainInfo(AppDomainID appDomainId,

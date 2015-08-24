@@ -1411,8 +1411,8 @@ public:
     var_types                       GetHfaType(GenTreePtr tree);
     unsigned                        GetHfaSlots(GenTreePtr tree);
 
-    inline var_types                GetHfaType(CORINFO_CLASS_HANDLE hClass);
-    inline unsigned                 GetHfaSlots(CORINFO_CLASS_HANDLE hClass);
+    var_types                       GetHfaType(CORINFO_CLASS_HANDLE hClass);
+    unsigned                        GetHfaSlots(CORINFO_CLASS_HANDLE hClass);
 
 #endif // _TARGET_ARM_
 
@@ -5302,10 +5302,14 @@ public:
     typedef ArrayStack<GenTreePtr> GenTreePtrStack;
     typedef SimplerHashTable<unsigned, SmallPrimitiveKeyFuncs<unsigned>, GenTreePtrStack*, DefaultSimplerHashBehavior> LclNumToGenTreePtrStack;
 
+    // Kill set to track variables with intervening definitions.
+    VARSET_TP optCopyPropKillSet;
+
     // Copy propagation functions.
     void optCopyProp(BasicBlock* block, GenTreePtr stmt, GenTreePtr tree, LclNumToGenTreePtrStack* curSsaName);
     void optBlockCopyPropPopStacks(BasicBlock* block, LclNumToGenTreePtrStack* curSsaName);
     void optBlockCopyProp(BasicBlock* block, LclNumToGenTreePtrStack* curSsaName);
+    bool optIsSsaLocal(GenTreePtr tree);
     int optCopyProp_LclVarScore(LclVarDsc* lclVarDsc, LclVarDsc* copyVarDsc, bool preferOp2);
     void optVnCopyProp();
 
@@ -6618,7 +6622,7 @@ XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 #else
         assert(!"getFPInstructionSet() is not implemented for target arch");
         unreached();
-        InstructionSet_NONE;
+        return InstructionSet_NONE;
 #endif
     }
 

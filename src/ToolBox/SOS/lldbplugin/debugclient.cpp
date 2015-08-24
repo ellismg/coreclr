@@ -10,10 +10,13 @@
 #include <dbgtargetcontext.h>
 #include <string>
 
-DebugClient::DebugClient(lldb::SBDebugger &debugger, lldb::SBCommandReturnObject &returnObject, char *coreclrDirectory) :
+ULONG g_currentThreadIndex = -1;
+ULONG g_currentThreadSystemId = -1;
+char *g_coreclrDirectory;
+
+DebugClient::DebugClient(lldb::SBDebugger &debugger, lldb::SBCommandReturnObject &returnObject) :
     m_debugger(debugger),
-    m_returnObject(returnObject),
-    m_coreclrDirectory(coreclrDirectory)
+    m_returnObject(returnObject)
 {
     returnObject.SetStatus(lldb::eReturnStatusSuccessFinishResult);
 }
@@ -741,6 +744,14 @@ DebugClient::GetCurrentThreadId(
         return E_FAIL;
     }
 
+    // This is allow the a valid current TID to be returned to 
+    // workaround a bug in lldb on core dumps.
+    if (g_currentThreadIndex != -1)
+    {
+        *id = g_currentThreadIndex;
+        return S_OK;
+    }
+
     *id = thread.GetIndexID();
     return S_OK;
 }
@@ -774,6 +785,14 @@ DebugClient::GetCurrentThreadSystemId(
         return E_FAIL;
     }
 
+    // This is allow the a valid current TID to be returned to 
+    // workaround a bug in lldb on core dumps.
+    if (g_currentThreadSystemId != -1)
+    {
+        *sysId = g_currentThreadSystemId;
+        return S_OK;
+    }
+
     *sysId = thread.GetThreadID();
     return S_OK;
 }
@@ -795,13 +814,22 @@ DebugClient::GetThreadIdBySystemId(
         goto exit;
     }
 
-    thread = process.GetThreadByID(sysId);
-    if (!thread.IsValid())
+    // If we have a "fake" thread OS (system) id and a fake thread index,
+    // we need to return fake thread index.
+    if (g_currentThreadSystemId == sysId && g_currentThreadIndex != -1)
     {
-        goto exit;
+        id = g_currentThreadIndex;
     }
+    else
+    {
+        thread = process.GetThreadByID(sysId);
+        if (!thread.IsValid())
+        {
+            goto exit;
+        }
 
-    id = thread.GetIndexID();
+        id = thread.GetIndexID();
+    }
     hr = S_OK;
 
 exit:
@@ -834,7 +862,17 @@ DebugClient::GetThreadContextById(
         goto exit;
     }
 
-    thread = process.GetThreadByID(threadID);
+    // If we have a "fake" thread OS (system) id and a fake thread index,
+    // use the fake thread index to get the context.
+    if (g_currentThreadSystemId == threadID && g_currentThreadIndex != -1)
+    {
+        thread = process.GetThreadByIndexID(g_currentThreadIndex);
+    }
+    else
+    {
+        thread = process.GetThreadByID(threadID);
+    }
+    
     if (!thread.IsValid())
     {
         goto exit;
@@ -849,6 +887,7 @@ DebugClient::GetThreadContextById(
     dtcontext = (DT_CONTEXT*)context;
     dtcontext->ContextFlags = contextFlags;
 
+#ifdef DBG_TARGET_AMD64
     dtcontext->Rip = frame.GetPC();
     dtcontext->Rsp = frame.GetSP();
     dtcontext->Rbp = frame.GetFP();
@@ -875,6 +914,26 @@ DebugClient::GetThreadContextById(
     dtcontext->SegEs = GetRegister(frame, "es");
     dtcontext->SegFs = GetRegister(frame, "fs");
     dtcontext->SegGs = GetRegister(frame, "gs");
+#elif DBG_TARGET_ARM
+    dtcontext->Pc = frame.GetPC();
+    dtcontext->Sp = frame.GetSP();
+    dtcontext->Lr = GetRegister(frame, "lr");
+    dtcontext->Cpsr = GetRegister(frame, "cpsr");
+
+    dtcontext->R0 = GetRegister(frame, "r0");
+    dtcontext->R1 = GetRegister(frame, "r1");
+    dtcontext->R2 = GetRegister(frame, "r2");
+    dtcontext->R3 = GetRegister(frame, "r3");
+    dtcontext->R4 = GetRegister(frame, "r4");
+    dtcontext->R5 = GetRegister(frame, "r5");
+    dtcontext->R6 = GetRegister(frame, "r6");
+    dtcontext->R7 = GetRegister(frame, "r7");
+    dtcontext->R8 = GetRegister(frame, "r8");
+    dtcontext->R9 = GetRegister(frame, "r9");
+    dtcontext->R10 = GetRegister(frame, "r10");
+    dtcontext->R11 = GetRegister(frame, "r11");
+    dtcontext->R12 = GetRegister(frame, "r12");
+#endif
 
     hr = S_OK;
 
@@ -980,7 +1039,7 @@ DebugClient::GetFrameOffset(
 PCSTR
 DebugClient::GetCoreClrDirectory()
 {
-    return m_coreclrDirectory;
+    return g_coreclrDirectory;
 }
 
 DWORD_PTR

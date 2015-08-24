@@ -2562,6 +2562,15 @@ unsigned CEEInfo::getClassGClayout (CORINFO_CLASS_HANDLE clsHnd, BYTE* gcPtrs)
 
     return result;
 }
+
+// returns the enregister info for a struct based on type of fields, alignment, etc.
+bool CEEInfo::getSystemVAmd64PassStructInRegisterDescriptor(
+                                                /*IN*/  CORINFO_CLASS_HANDLE structHnd,
+                                                /*OUT*/ SYSTEMV_AMD64_CORINFO_STRUCT_REG_PASSING_DESCRIPTOR* structPassInRegDescPtr)
+{
+    return false;
+}
+
 /*********************************************************************/
 unsigned CEEInfo::getClassNumInstanceFields (CORINFO_CLASS_HANDLE clsHnd)
 {
@@ -11079,8 +11088,8 @@ void CEEJitInfo::allocUnwindInfo (
         for (ULONG iUnwindInfo = 0; iUnwindInfo < m_usedUnwindInfos - 1; iUnwindInfo++)
         {
             PRUNTIME_FUNCTION pOtherFunction = m_CodeHeader->GetUnwindInfo(iUnwindInfo);
-            _ASSERTE(   RUNTIME_FUNCTION__BeginAddress(pOtherFunction) >= RUNTIME_FUNCTION__EndAddress(pRuntimeFunction, baseAddress)
-                     || RUNTIME_FUNCTION__EndAddress(pOtherFunction, baseAddress) <= RUNTIME_FUNCTION__BeginAddress(pRuntimeFunction));
+            _ASSERTE((   RUNTIME_FUNCTION__BeginAddress(pOtherFunction) >= RUNTIME_FUNCTION__EndAddress(pRuntimeFunction, baseAddress)
+                     || RUNTIME_FUNCTION__EndAddress(pOtherFunction, baseAddress) <= RUNTIME_FUNCTION__BeginAddress(pRuntimeFunction)));
         }
     }
 #endif // _DEBUG
@@ -11614,19 +11623,25 @@ void CEEJitInfo::allocMem (
 
     S_SIZE_T totalSize = S_SIZE_T(codeSize);
 
+    size_t roDataAlignment = sizeof(void*);
+    if ((flag & CORJIT_ALLOCMEM_FLG_RODATA_16BYTE_ALIGN)!= 0)
+    {
+        roDataAlignment = 16;
+    }
+    else if (roDataSize >= 8)
+    {
+        roDataAlignment = 8;
+    }
     if (roDataSize > 0)
     {
-        totalSize.AlignUp(sizeof(void *));
-        totalSize += roDataSize;
-
-#ifndef _WIN64
-        if (roDataSize >= 8)
-        {
-            // allocates an extra 4 bytes so that we can
-            // double align the roData section.
-            totalSize += 4;
+        size_t codeAlignment = ((flag & CORJIT_ALLOCMEM_FLG_16BYTE_ALIGN)!= 0)
+                               ? 16 : sizeof(void*);
+        totalSize.AlignUp(codeAlignment);
+        if (roDataAlignment > codeAlignment) {
+            // Add padding to align read-only data.
+            totalSize += (roDataAlignment - codeAlignment);
         }
-#endif
+        totalSize += roDataSize;
     }
 
 #ifdef WIN64EXCEPTIONS
@@ -11661,8 +11676,7 @@ void CEEJitInfo::allocMem (
 
     if (roDataSize > 0)
     {
-        current = (BYTE *)ALIGN_UP(current, (roDataSize >= 8) ? 8 : sizeof(void *));
-
+        current = (BYTE *)ALIGN_UP(current, roDataAlignment);
         *roDataBlock = current;
         current += roDataSize;
     }

@@ -6,9 +6,11 @@ set __BuildArch=x64
 set __BuildType=Debug
 set __BuildOS=Windows_NT
 
-:: Default to VS2013
-set __VSVersion=VS2013
-set __VSProductVersion=120
+:: Default to highest Visual Studio version available
+set __VSVersion=vs2015
+
+if defined VS120COMNTOOLS set __VSVersion=vs2013
+if defined VS140COMNTOOLS set __VSVersion=vs2015
 
 :: Set the various build properties here so that CMake and MSBuild can pick them up
 set "__ProjectDir=%~dp0"
@@ -20,11 +22,14 @@ set "__PackagesDir=%__ProjectDir%\packages"
 set "__RootBinDir=%__ProjectDir%\bin"
 set "__LogsDir=%__RootBinDir%\Logs"
 set __MSBCleanBuildArgs=
+set __SkipTestBuild=
 
 :Arg_Loop
 if "%1" == "" goto ArgsDone
 if /i "%1" == "/?" goto Usage
 if /i "%1" == "x64"    (set __BuildArch=x64&&shift&goto Arg_Loop)
+if /i "%1" == "x86"    (set __BuildArch=x86&&shift&goto Arg_Loop)
+if /i "%1" == "arm"    (set __BuildArch=arm&&shift&goto Arg_Loop)
 
 if /i "%1" == "debug"    (set __BuildType=Debug&shift&goto Arg_Loop)
 if /i "%1" == "release"   (set __BuildType=Release&shift&goto Arg_Loop)
@@ -36,8 +41,9 @@ if /i "%1" == "linuxmscorlib" (set __MscorlibOnly=1&set __BuildOS=Linux&shift&go
 if /i "%1" == "osxmscorlib" (set __MscorlibOnly=1&set __BuildOS=OSX&shift&goto Arg_Loop)
 if /i "%1" == "windowsmscorlib" (set __MscorlibOnly=1&set __BuildOS=Windows_NT&shift&goto Arg_Loop)
 
-if /i "%1" == "vs2013" (set __VSVersion=%1&set __VSProductVersion=120&shift&goto Arg_Loop)
-if /i "%1" == "vs2015" (set __VSVersion=%1&set __VSProductVersion=140&shift&goto Arg_Loop)
+if /i "%1" == "vs2013" (set __VSVersion=%1&shift&goto Arg_Loop)
+if /i "%1" == "vs2015" (set __VSVersion=%1&shift&goto Arg_Loop)
+if /i "%1" == "skiptestbuild" (set __SkipTestBuild=1&shift&goto Arg_Loop)
 
 echo Invalid commandline argument: %1
 goto Usage
@@ -93,6 +99,11 @@ for /f "delims=" %%a in ('powershell -NoProfile -ExecutionPolicy RemoteSigned "&
 goto CheckVS
 
 :CheckVS
+
+set __VSProductVersion=
+if /i "%__VSVersion%" == "vs2013" set __VSProductVersion=120
+if /i "%__VSVersion%" == "vs2015" set __VSProductVersion=140
+
 :: Check presence of VS
 if defined VS%__VSProductVersion%COMNTOOLS goto CheckVSExistence
 echo Visual Studio 2013+ (Community is free) is a pre-requisite to build this repository.
@@ -132,7 +143,9 @@ echo Commencing build of native components for %__BuildOS%.%__BuildArch%.%__Buil
 echo.
 
 :: Set the environment for the native build
-call "!VS%__VSProductVersion%COMNTOOLS!\..\..\VC\vcvarsall.bat" x86_amd64
+set __VCBuildArch=x86_amd64
+if /i "%__BuildArch%" == "x86" (set __VCBuildArch=x86)
+call "!VS%__VSProductVersion%COMNTOOLS!\..\..\VC\vcvarsall.bat" %__VCBuildArch%
 
 if exist "%VSINSTALLDIR%DIA SDK" goto GenVSSolution
 echo Error: DIA SDK is missing at "%VSINSTALLDIR%DIA SDK". ^
@@ -148,7 +161,7 @@ exit /b 1
 :GenVSSolution
 :: Regenerate the VS solution
 pushd "%__IntermediatesDir%"
-call "%__SourceDir%\pal\tools\gen-buildsys-win.bat" "%__ProjectDir%" %__VSVersion%
+call "%__SourceDir%\pal\tools\gen-buildsys-win.bat" "%__ProjectDir%" %__VSVersion% %__BuildArch%
 popd
 
 :BuildComponents
@@ -204,12 +217,16 @@ echo CrossGen mscorlib failed. Refer !__CrossGenMScorlibLog! for details.
 exit /b 1
 
 :PerformTestBuild
+if defined __SkipTestBuild (
+    echo Skipping test build
+    goto SuccessfulBuild
+)
 echo.
 echo Commencing build of tests for %__BuildOS%.%__BuildArch%.%__BuildType%
 echo.
 call %__ProjectDir%\tests\buildtest.cmd
 IF NOT ERRORLEVEL 1 goto SuccessfulBuild
-echo Test binaries build failed. Refer !__MScorlibBuildLog! for details.
+echo Test binaries build failed. Refer !__TestManagedBuildLog! for details.
 exit /b 1
 
 :SuccessfulBuild
@@ -217,7 +234,9 @@ exit /b 1
 echo Repo successfully built.
 echo.
 echo Product binaries are available at !__BinDir!
-echo Test binaries are available at !__TestBinDir!
+if not defined __SkipTestBuild (
+    echo Test binaries are available at !__TestBinDir!
+)
 exit /b 0
 
 :Usage
@@ -225,11 +244,12 @@ echo.
 echo Usage:
 echo %0 BuildArch BuildType [clean] [vsversion] where:
 echo.
-echo BuildArch can be: x64
+echo BuildArch can be: x64, x86
 echo BuildType can be: Debug, Release
 echo Clean - optional argument to force a clean build.
-echo VSVersion - optional argument to use VS2013 or VS2015 (default VS2013)
+echo VSVersion - optional argument to use VS2013 or VS2015 (default VS2015)
 echo windowsmscorlib - Build mscorlib for Windows
 echo linuxmscorlib - Build mscorlib for Linux
 echo osxmscorlib - Build mscorlib for OS X
+echo skiptestbuild - Skip building tests
 exit /b 1

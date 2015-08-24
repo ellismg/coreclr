@@ -3612,8 +3612,6 @@ ExceptionTracker* ExceptionTracker::GetOrCreateTracker(
     bool fIsInterleavedHandling = false;
     bool fTransitionFromSecondToFirstPass = false;
 
-    PartialTrackerState previousTrackerPartialState;
-
     // Initialize the out parameter.
     *pStackTraceState = STS_Append;
 
@@ -3649,12 +3647,58 @@ ExceptionTracker* ExceptionTracker::GetOrCreateTracker(
             {
                 if (fIsInterleavedHandling)
                 {
-                    // Remember part of the current state that needs to be transferred to
-                    // the newly created tracker.
-                    previousTrackerPartialState.Save(pTracker);
-
-                    // We just transitioned from 2nd pass to 1st pass when we handle the exception in an interleaved manner
+                    // We just transitioned from 2nd pass to 1st pass when we handle the exception in an interleaved manner.
+                    // In interleaved exception handling a single exception is handled in an interleaved
+                    // series of first and second passes. We re-create the exception tracker in-place
+                    // and carry over several members that were set when processing one of the previous frames.
                     EH_LOG((LL_INFO100, ">>continued processing of PREVIOUS exception (interleaved handling)\n"));
+                    {
+                        GCX_COOP();
+
+                        // Remember part of the current state that needs to be transferred to
+                        // the newly created tracker.
+                        PartialTrackerState previousTrackerPartialState;
+                        previousTrackerPartialState.Save(pTracker);
+
+                        // Rember the previous tracker pointer so that we can restore it
+                        ExceptionTracker* prevTracker = pTracker->m_pPrevNestedInfo;
+
+                        // Free the tracker resources so that we can recreate a new one in-place
+                        pTracker->ReleaseResources();
+
+                        new (pTracker) ExceptionTracker(ControlPc,
+                                                        pExceptionRecord,
+                                                        pContextRecord);
+
+                        // Restore part of the tracker state that was saved before recreating the tracker
+                        previousTrackerPartialState.Restore(pTracker);
+                        // Reset the 'unwind has started' flag to indicate we are in the first pass again
+                        pTracker->m_ExceptionFlags.ResetUnwindHasStarted();
+
+                        // Restore the trackerlink to the previous exception tracker
+                        pTracker->m_pPrevNestedInfo = prevTracker;
+
+                        OBJECTREF oThrowable = CreateThrowable(pExceptionRecord, bAsynchronousThreadStop);
+
+                        GCX_FORBID();   // we haven't protected oThrowable
+
+                        CONSISTENCY_CHECK(oThrowable != NULL);
+                        CONSISTENCY_CHECK(NULL == pTracker->m_hThrowable);
+
+                        pThread->SafeSetThrowables(oThrowable);
+
+                        if (pTracker->CanAllocateMemory())
+                        {
+                            pTracker->m_StackTraceInfo.AllocateStackTrace();
+                        }
+
+                        INDEBUG(oThrowable = NULL);
+
+                        _ASSERTE(pTracker->m_pLimitFrame == NULL);
+                        pTracker->ResetLimitFrame();
+                    }
+
+                    *pStackTraceState = STS_Append;
                 }
                 else
                 {
@@ -3662,14 +3706,13 @@ ExceptionTracker* ExceptionTracker::GetOrCreateTracker(
                     // This means that some unmanaged frame outside of the EE catches the previous exception,
                     // so we should trash the current tracker and create a new one.
                     EH_LOG((LL_INFO100, ">>NEW exception (the previous second pass finishes at some unmanaged frame outside of the EE)\n"));
-                }
+                    {
+                        GCX_COOP();
+                        ExceptionTracker::PopTrackers(sf, false);
+                    }
 
-                {
-                    GCX_COOP();
-                    ExceptionTracker::PopTrackers(sf, false);
+                    fCreateNewTracker = true;
                 }
-
-                fCreateNewTracker = true;
             }
             else
             {
@@ -3740,17 +3783,6 @@ ExceptionTracker* ExceptionTracker::GetOrCreateTracker(
         new (pNewTracker) ExceptionTracker(ControlPc,
                                            pExceptionRecord,
                                            pContextRecord);
-
-        if (fIsInterleavedHandling && fTransitionFromSecondToFirstPass)
-        {
-            // In interleaved exception handling a single exception is handled in an interleaved
-            // series of first and second passes. When we create a new tracker as a result
-            // of switching from the 2nd pass back to the 1st pass, we need to carry over
-            // several members that were set when processing one of the previous frames.
-            previousTrackerPartialState.Restore(pNewTracker);
-            // Reset the 'unwind has started' flag to indicate we are in the first pass again
-            pNewTracker->m_ExceptionFlags.ResetUnwindHasStarted();
-        }
 
         CONSISTENCY_CHECK(pNewTracker->IsValid());
         CONSISTENCY_CHECK(pThread == pNewTracker->m_pThread);
@@ -4388,7 +4420,7 @@ VOID UnwindManagedExceptionPass2(EXCEPTION_RECORD* exceptionRecord, CONTEXT* unw
     CONTEXT contextStorage;
     DISPATCHER_CONTEXT dispatcherContext;
     EECodeInfo codeInfo;
-    ULONG64 establisherFrame = NULL;
+    UINT_PTR establisherFrame = NULL;
     PVOID handlerData;
     ULONG64 stackHighAddress = (ULONG64)PAL_GetStackBase();
     ULONG64 stackLowAddress = (ULONG64)PAL_GetStackLimit();
@@ -4404,7 +4436,7 @@ VOID UnwindManagedExceptionPass2(EXCEPTION_RECORD* exceptionRecord, CONTEXT* unw
 
     do
     {
-        controlPc = currentFrameContext->Rip;
+        controlPc = GetIP(currentFrameContext);
 
         codeInfo.Init(controlPc);
         dispatcherContext.FunctionEntry = codeInfo.GetFunctionEntry();
@@ -4471,13 +4503,13 @@ VOID UnwindManagedExceptionPass2(EXCEPTION_RECORD* exceptionRecord, CONTEXT* unw
         }
 
         // Check whether we are crossing managed-to-native boundary
-        if (!ExecutionManager::IsManagedCode(currentFrameContext->Rip))
+        if (!ExecutionManager::IsManagedCode(GetIP(currentFrameContext)))
         {
             // Return back to the UnwindManagedExceptionPass1 and let it unwind the native frames
             return;
         }
 
-    } while (IsSpInStackLimits(currentFrameContext->Rsp, stackLowAddress, stackHighAddress) &&
+    } while (IsSpInStackLimits(GetSP(currentFrameContext), stackLowAddress, stackHighAddress) &&
         (establisherFrame != targetFrameSp));
 
     _ASSERTE(!"UnwindManagedExceptionPass2: Unwinding failed. Reached the end of the stack");
@@ -4505,7 +4537,7 @@ VOID DECLSPEC_NORETURN UnwindManagedExceptionPass1(PAL_SEHException& ex)
     DISPATCHER_CONTEXT dispatcherContext;
     EECodeInfo codeInfo;
     UINT_PTR controlPc;
-    ULONG64 establisherFrame = NULL;
+    UINT_PTR establisherFrame = NULL;
     PVOID handlerData;
     ULONG64 stackHighAddress = (ULONG64)PAL_GetStackBase();
     ULONG64 stackLowAddress = (ULONG64)PAL_GetStackLimit();
@@ -4516,7 +4548,7 @@ VOID DECLSPEC_NORETURN UnwindManagedExceptionPass1(PAL_SEHException& ex)
     
     unwindStartContext = frameContext;
 
-    if (!ExecutionManager::IsManagedCode(ex.ContextRecord.Rip))
+    if (!ExecutionManager::IsManagedCode(GetIP(&ex.ContextRecord)))
     {
         // This is the first time we see the managed exception, set its context to the managed frame that has caused
         // the exception to be thrown
@@ -4570,7 +4602,7 @@ VOID DECLSPEC_NORETURN UnwindManagedExceptionPass1(PAL_SEHException& ex)
             if (disposition == ExceptionContinueSearch)
             {
                 // Exception handler not found. Try the parent frame.
-                controlPc = frameContext.Rip;
+                controlPc = GetIP(&frameContext);
             }
             else if (disposition == ExceptionStackUnwind)
             {
@@ -4628,7 +4660,7 @@ VOID DECLSPEC_NORETURN UnwindManagedExceptionPass1(PAL_SEHException& ex)
                 // Pop all frames that are below the block of native frames and that would be
                 // in the unwound part of the stack when UnwindManagedExceptionPass1 is resumed 
                 // at the next managed frame.
-                UnwindFrameChain(GetThread(), (VOID*)frameContext.Rsp);
+                UnwindFrameChain(GetThread(), (VOID*)GetSP(&frameContext));
 
                 // We are going to reclaim the stack range that was scanned by the exception tracker
                 // until now. We need to reset the explicit frames range so that if GC fires before
@@ -4644,7 +4676,7 @@ VOID DECLSPEC_NORETURN UnwindManagedExceptionPass1(PAL_SEHException& ex)
             UNREACHABLE();
         }
 
-    } while (IsSpInStackLimits(frameContext.Rsp, stackLowAddress, stackHighAddress));
+    } while (IsSpInStackLimits(GetSP(&frameContext), stackLowAddress, stackHighAddress));
 
     _ASSERTE(!"UnwindManagedExceptionPass1: Failed to find a handler. Reached the end of the stack");
     EEPOLICY_HANDLE_FATAL_ERROR(COR_E_EXECUTIONENGINE);
