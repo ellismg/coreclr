@@ -4,6 +4,7 @@
 //
 
 #include <assert.h>
+#include <string.h>
 
 #include "locale.hpp"
 
@@ -11,10 +12,20 @@
 #include <unicode/dtptngen.h>
 #include <unicode/locdspnm.h>
 
+#define GREGORIAN_NAME "gregorian"
+#define JAPANESE_NAME "japanese"
+#define BUDDHIST_NAME "buddhist"
+#define HEBREW_NAME "hebrew"
+#define DANGI_NAME "dangi"
+#define PERSIAN_NAME "persian"
+#define ISLAMIC_NAME "islamic"
+#define ISLAMIC_UMALQURA_NAME "islamic-umalqura"
+#define ROC_NAME "roc"
+
 /*
 * These values should be kept in sync with System.Globalization.CalendarId
 */
-enum CalendarId : int32_t
+enum CalendarId : int16_t
 {
 	UNINITIALIZED_VALUE = 0,
 	GREGORIAN = 1,     // Gregorian (localized) calendar
@@ -112,37 +123,113 @@ const char* GetCalendarName(CalendarId calendarId)
 	switch (calendarId)
 	{
 		case JAPAN:
-			return "japanese";
+			return JAPANESE_NAME;
 		case THAI:
-			return "buddhist";
+			return BUDDHIST_NAME;
 		case HEBREW:
-			return "hebrew";
-		case CHINESELUNISOLAR:
-		case KOREANLUNISOLAR:
-		case JAPANESELUNISOLAR:
-		case TAIWANLUNISOLAR:
-			return "chinese";
+			return HEBREW_NAME;
+		case KOREA:
+			return DANGI_NAME;
 		case PERSIAN:
-			return "persian";
+			return PERSIAN_NAME;
 		case HIJRI:
+			return ISLAMIC_NAME;
 		case UMALQURA:
-			return "islamic";
+			return ISLAMIC_UMALQURA_NAME;
+		case TAIWAN:
+			return ROC_NAME;
 		case GREGORIAN:
 		case GREGORIAN_US:
 		case GREGORIAN_ARABIC:
 		case GREGORIAN_ME_FRENCH:
 		case GREGORIAN_XLIT_ENGLISH:
 		case GREGORIAN_XLIT_FRENCH:
-		case KOREA:
 		case JULIAN:
 		case LUNAR_ETO_CHN:
 		case LUNAR_ETO_KOR:
 		case LUNAR_ETO_ROKUYOU:
 		case SAKA:
-		case TAIWAN:
+		// don't support the lunisolar calendars until we have a solid understanding
+		// of how they map to the ICU/CLDR calendars
+		case CHINESELUNISOLAR:
+		case KOREANLUNISOLAR:
+		case JAPANESELUNISOLAR:
+		case TAIWANLUNISOLAR:
 		default:
-			return "gregorian";
+			return GREGORIAN_NAME;
 	}
+}
+
+/*
+Function:
+GetCalendarId
+
+Gets the associated CalendarId for the ICU calendar name.
+*/
+CalendarId GetCalendarId(const char* calendarName)
+{
+	if (strcasecmp(calendarName, GREGORIAN_NAME) == 0)
+		//TODO: what about the other gregorian types?
+		return GREGORIAN;
+	else if (strcasecmp(calendarName, JAPANESE_NAME) == 0)
+		return JAPAN;
+	else if (strcasecmp(calendarName, BUDDHIST_NAME) == 0)
+		return THAI;
+	else if (strcasecmp(calendarName, HEBREW_NAME) == 0)
+		return HEBREW;
+	else if (strcasecmp(calendarName, DANGI_NAME) == 0)
+		return KOREA;
+	else if (strcasecmp(calendarName, PERSIAN_NAME) == 0)
+		return PERSIAN;
+	else if (strcasecmp(calendarName, ISLAMIC_NAME) == 0)
+		return HIJRI;
+	else if (strcasecmp(calendarName, ISLAMIC_UMALQURA_NAME) == 0)
+		return UMALQURA;
+	else if (strcasecmp(calendarName, ROC_NAME) == 0)
+		return TAIWAN;
+	else
+		return UNINITIALIZED_VALUE;
+}
+
+/*
+Function:
+GetCalendars
+
+Returns the list of CalendarIds that are available for the specified locale.
+*/
+extern "C" int32_t GetCalendars(const UChar* localeName, CalendarId* calendars, int32_t calendarsCapacity)
+{
+	Locale locale = GetLocale(localeName);
+	if (locale.isBogus())
+		return 0;
+
+	UErrorCode err = U_ZERO_ERROR;
+	LocalPointer<StringEnumeration> stringEnumerator(Calendar::getKeywordValuesForLocale("calendar", locale, TRUE, err));
+
+	if (stringEnumerator.isNull() || U_FAILURE(err))
+		return 0;
+
+	int stringEnumeratorCount = stringEnumerator->count(err);
+	if (U_FAILURE(err))
+		return 0;
+
+	int calendarsReturned = 0;
+	for (int i = 0; i < stringEnumeratorCount && calendarsReturned < calendarsCapacity; i++)
+	{
+		int32_t calendarNameLength = 0;
+		const char* calendarName = stringEnumerator->next(&calendarNameLength, err);
+		if (U_SUCCESS(err))
+		{
+			CalendarId calendarId = GetCalendarId(calendarName);
+			if (calendarId != UNINITIALIZED_VALUE)
+			{
+				calendars[calendarsReturned] = calendarId;
+				calendarsReturned++;
+			}
+		}
+	}
+
+	return calendarsReturned;
 }
 
 /*
@@ -313,15 +400,31 @@ EnumEraNames
 Enumerates all the era names of the specified locale and calendar, invoking the callback function
 for each era name.
 */
-bool EnumEraNames(Locale& locale, CalendarId calendarId, EnumCalendarInfoCallback callback, const void* context)
+bool EnumEraNames(Locale& locale, CalendarId calendarId, CalendarDataType dataType, EnumCalendarInfoCallback callback, const void* context)
 {
 	UErrorCode err = U_ZERO_ERROR;
-	DateFormatSymbols dateFormatSymbols(locale, GetCalendarName(calendarId), err);
+	const char* calendarName = GetCalendarName(calendarId);
+	DateFormatSymbols dateFormatSymbols(locale, calendarName, err);
 	if (U_FAILURE(err))
 		return false;
 
 	int32_t eraNameCount;
-	const UnicodeString* eraNames = dateFormatSymbols.getEras(eraNameCount);
+	const UnicodeString* eraNames;
+
+	if (dataType == EraNames)
+	{
+		eraNames = dateFormatSymbols.getEras(eraNameCount);
+	}
+	else if (dataType == AbbrevEraNames)
+	{
+		eraNames = dateFormatSymbols.getNarrowEras(eraNameCount);
+	}
+	else
+	{
+		assert(false);
+		return false;
+	}
+
 	return EnumCalendarArray(eraNames, eraNameCount, callback, context);
 }
 
@@ -352,6 +455,7 @@ extern "C" int32_t EnumCalendarInfo(
 		case LongDates:
 			// TODO: need to replace the "EEEE"s with "dddd"s for .net
 			// Also, "LLLL"s to "MMMM"s
+			// Also, "G"s to "g"s
 			return InvokeCallbackForDateTimePattern(locale, "eeeeMMMMddyyyy", callback, context);
 		case YearMonths:
 			return InvokeCallbackForDateTimePattern(locale, "yyyyMMMM", callback, context);
@@ -371,12 +475,106 @@ extern "C" int32_t EnumCalendarInfo(
 			return EnumMonths(locale, calendarId, DateFormatSymbols::FORMAT, DateFormatSymbols::ABBREVIATED, callback, context);
 		case EraNames:
 		case AbbrevEraNames:
-			// NOTE: On Windows, the EraName is "A.D." and AbbrevEraName is "AD".
-			// But ICU/CLDR only supports "Anno Domini", "AD", and "A".
-			// So returning getEras (i.e. "AD") for both EraNames and AbbrevEraNames.
-			return EnumEraNames(locale, calendarId, callback, context);
+			return EnumEraNames(locale, calendarId, dataType, callback, context);
 		default:
 			assert(false);
 			return false;
 	}
+}
+
+/*
+Function:
+GetLatestJapaneseEra
+
+Gets the latest era in the Japanese calendar.
+*/
+extern "C" int32_t GetLatestJapaneseEra()
+{
+	UErrorCode err = U_ZERO_ERROR;
+	Locale japaneseLocale("ja_JP@calendar=japanese");
+	LocalPointer<Calendar> calendar(Calendar::createInstance(japaneseLocale, err));
+
+	if (U_FAILURE(err))
+		return 0;
+
+	return calendar->getMaximum(UCAL_ERA);
+}
+
+/*
+Function:
+GetJapaneseEraInfo
+
+Gets the starting Gregorian date of the specified Japanese Era.
+*/
+extern "C" int32_t GetJapaneseEraStartDate(
+	int32_t era,
+	int32_t* startYear,
+	int32_t* startMonth,
+	int32_t* startDay)
+{
+	UErrorCode err = U_ZERO_ERROR;
+	Locale japaneseLocale("ja_JP@calendar=japanese");
+	LocalPointer<Calendar> calendar(Calendar::createInstance(japaneseLocale, err));
+	if (U_FAILURE(err))
+		return false;
+
+	calendar->set(UCAL_ERA, era);
+	calendar->set(UCAL_YEAR, 1);
+
+	// UCAL_EXTENDED_YEAR is the gregorian year for the JapaneseCalendar
+	*startYear = calendar->get(UCAL_EXTENDED_YEAR, err);
+	if (U_FAILURE(err))
+		return false;
+
+	// set the date to Jan 1
+	calendar->set(UCAL_MONTH, 0);
+	calendar->set(UCAL_DATE, 1);
+
+	int32_t currentEra;
+	for (int i = 0; i <= 12; i++)
+	{
+		currentEra = calendar->get(UCAL_ERA, err);
+		if (U_FAILURE(err))
+			return false;
+
+		if (currentEra == era)
+		{
+			for (int i = 0; i < 31; i++)
+			{
+				// subtract 1 day at a time until we get out of the specified Era
+				calendar->add(Calendar::DATE, -1, err);
+				if (U_FAILURE(err))
+					return false;
+
+				currentEra = calendar->get(UCAL_ERA, err);
+				if (U_FAILURE(err))
+					return false;
+
+				if (currentEra != era)
+				{
+					// add back 1 day to get back into the specified Era
+					calendar->add(UCAL_DATE, 1, err);
+					if (U_FAILURE(err))
+						return false;
+
+					*startMonth = calendar->get(UCAL_MONTH, err) + 1;  // ICU Calendar months are 0-based, but .NET is 1-based
+					if (U_FAILURE(err))
+						return false;
+
+					*startDay = calendar->get(UCAL_DATE, err);
+					if (U_FAILURE(err))
+						return false;
+
+					return true;
+				}
+			}
+		}
+
+		// add 1 month at a time until we get into the specified Era
+		calendar->add(UCAL_MONTH, 1, err);
+		if (U_FAILURE(err))
+			return false;
+	}
+
+	return false;
 }
