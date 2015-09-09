@@ -60,9 +60,10 @@ extern "C" int32_t GetLocaleName(const UChar* localeName, UChar* value, int32_t 
 		return UErrorCodeToBool(U_ILLEGAL_ARGUMENT_ERROR);
 	}
 
-	if (strlen(locale.getISO3Language()) == 0)
+	if (strlen(locale.getISO3Language()) == 0 || 
+		(strlen(locale.getCountry()) > 0 && strlen(locale.getISO3Country()) == 0))
 	{
-		// unknown language; language is required (script and country optional)
+		// unknown language or invalid country; language is required (script and country optional)
 		return UErrorCodeToBool(U_ILLEGAL_ARGUMENT_ERROR);
 	}
 

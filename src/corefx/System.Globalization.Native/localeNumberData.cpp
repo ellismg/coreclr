@@ -7,8 +7,11 @@
 #include <string.h>
 
 #include "locale.hpp"
+#include "calendarData.hpp"
 
+#include "unicode/calendar.h"
 #include "unicode/decimfmt.h"
+#include "unicode/localpointer.h"
 #include "unicode/numfmt.h"
 #include "unicode/ulocdata.h"
 
@@ -37,12 +40,21 @@ enum LocaleNumberData : int32_t
 	PositiveMonetaryNumberFormat = 0x0000001B,
 	NegativeMonetaryNumberFormat = 0x0000001C,
 	CalendarType = 0x00001009,
+	FirstDayofWeek = 0x0000100C,
 	FirstWeekOfYear = 0x0000100D,
 	ReadingLayout = 0x00000070,
 	NegativePercentFormat = 0x00000074,
 	PositivePercentFormat = 0x00000075,
 	Digit = 0x00000010,
 	Monetary = 0x00000018
+};
+
+// Enum that corresponds to managed enum System.Globalization.CalendarWeekRule
+enum CalendarWeekRule : int32_t
+{
+	FirstDay = 0,
+	FirstFullWeek = 1,
+	FirstFourDayWeek = 2
 };
 
 /*
@@ -80,7 +92,7 @@ void NormalizePattern(const UnicodeString *srcPattern, UnicodeString *destPatter
 
 	for (int i = iStart; i <= iEnd; i++)
 	{
-		UChar ch = srcPattern->char32At(i);
+		UChar ch = srcPattern->charAt(i);
 		switch (ch)
 		{
 		case chPatternDigit:
@@ -125,7 +137,7 @@ void NormalizePattern(const UnicodeString *srcPattern, UnicodeString *destPatter
 		}
 	}
 
-	// if there is no negative subpattern, the convention is to prefix the minus sign
+	// if there is no negative subpattern, the ICU convention is to prefix the minus sign
 	if (isNegative && !minusAdded)
 	{
 		destPattern->insert(0, chPatternMinus);
@@ -367,14 +379,73 @@ extern "C" int32_t GetLocaleInfoInt(const UChar* localeName, LocaleNumberData lo
 		*value = GetCurrencyNegativePattern(locale);
 		break;
 	case CalendarType:
-		*value = 1; //TODO: implement
+	{
+		LocalPointer<Calendar> calendar(Calendar::createInstance(locale, status));
+		if (U_SUCCESS(status))
+		{
+			const char* calendarName = calendar->getType();
+			CalendarId calendarId = GetCalendarId(calendarName);
+			if (calendarId != UNINITIALIZED_VALUE)
+			{
+				*value = calendarId;
+			}
+			else
+			{
+				status = U_UNSUPPORTED_ERROR;
+			}
+		}
 		break;
+	}
 	case FirstWeekOfYear:
-		*value = 0; //TODO: implement
+	{
+		// corresponds to DateTimeFormat.CalendarWeekRule
+		LocalPointer<Calendar> calendar(Calendar::createInstance(locale, status));
+		if (U_SUCCESS(status))
+		{
+			// values correspond to LOCALE_IFIRSTWEEKOFYEAR
+			int minDaysInWeek = calendar->getMinimalDaysInFirstWeek();
+			if (minDaysInWeek == 1)
+			{
+				*value = CalendarWeekRule::FirstDay;
+			}
+			else if (minDaysInWeek == 7)
+			{
+				*value = CalendarWeekRule::FirstFullWeek;
+			}
+			else if (minDaysInWeek >= 4)
+			{
+				*value = CalendarWeekRule::FirstFourDayWeek;
+			}
+			else
+			{
+				assert(false);
+				status = U_UNSUPPORTED_ERROR;
+			}
+		}
 		break;
+	}
 	case ReadingLayout:
-		*value = 0; //todo: implement
+	{
+		// coresponds to values 0 and 1 in LOCALE_IREADINGLAYOUT (values 2 and 3 not used in coreclr)
+		//  0 - Left to right (such as en-US)
+		//  1 - Right to left (such as arabic locales)
+		ULayoutType orientation = uloc_getCharacterOrientation(locale.getName(), &status);
+		// alternative implementation in ICU 54+ is Locale.isRightToLeft() which also supports script tags in locale
+		if (U_SUCCESS(status))
+		{
+			*value = (orientation == ULOC_LAYOUT_RTL) ? 1 : 0;
+		}
 		break;
+	}
+	case FirstDayofWeek:
+	{
+		LocalPointer<Calendar> pcalendar(Calendar::createInstance(locale, status));
+		if (U_SUCCESS(status))
+		{
+			*value = pcalendar->getFirstDayOfWeek(status) - 1; // .NET is 0-based and ICU is 1-based
+		}
+		break;
+	}
 	case NegativePercentFormat:
 		*value = GetPercentNegativePattern(locale);
 		break;
@@ -388,6 +459,47 @@ extern "C" int32_t GetLocaleInfoInt(const UChar* localeName, LocaleNumberData lo
 	}
 
 	assert(status != U_BUFFER_OVERFLOW_ERROR);
+
+	return UErrorCodeToBool(status);
+}
+
+/*
+PAL Function:
+GetLocaleInfoInt
+
+Obtains integer locale information
+Returns 1 for success, 0 otherwise
+*/
+extern "C" int32_t GetLocaleInfoGroupingSizes(const UChar* localeName, LocaleNumberData localeGroupingData, int32_t* primaryGroupSize, int32_t* secondaryGroupSize)
+{
+	Locale locale = GetLocale(localeName);
+	if (locale.isBogus())
+	{
+		return UErrorCodeToBool(U_ILLEGAL_ARGUMENT_ERROR);
+	}
+
+	UNumberFormatStyle style;
+	switch (localeGroupingData)
+	{
+		case Digit:
+			style = UNUM_DECIMAL;
+			break;
+		case Monetary:
+			style = UNUM_CURRENCY;
+			break;
+		default:
+			assert(false);
+			return UErrorCodeToBool(U_UNSUPPORTED_ERROR);
+	}
+
+	UErrorCode status = U_ZERO_ERROR;
+	UNumberFormat* numformat = unum_open(style, NULL, 0, locale.getName(), NULL, &status);
+	if (U_SUCCESS(status))
+	{
+		*primaryGroupSize = unum_getAttribute(numformat, UNUM_GROUPING_SIZE);
+		*secondaryGroupSize = unum_getAttribute(numformat, UNUM_SECONDARY_GROUPING_SIZE);
+		unum_close(numformat);
+	}
 
 	return UErrorCodeToBool(status);
 }
