@@ -14,8 +14,8 @@
 #include "unicode/localpointer.h"
 
 // invariant character definitions used by ICU
-#define chSpace                       ((UChar)0x0020) // space 
-#define chSpace2                      ((UChar)0x00A0) // space
+#define UCHAR_SPACE                ((UChar)0x0020) // space 
+#define UCHAR_NBSPACE              ((UChar)0x00A0) // space
 
 // Enum that corresponds to managed enum CultureData.LocaleStringData.
 // The numeric values of the enum members match their Win32 counterparts. 
@@ -230,15 +230,21 @@ extern "C" int32_t GetLocaleInfoString(const UChar* localeName, LocaleStringData
 			status = GetLocaleInfoDecimalFormatSymbol(locale, DecimalFormatSymbols::kInfinitySymbol, value, valueLength);
 			break;
 		case ParentName:
-			if (strlen(locale.getCountry()) > 0)
+		{
+			// ICU supports lang[-script][-region][-variant] so up to 4 parents including invariant locale
+			char localeNameTemp[ULOC_FULLNAME_CAPACITY];
+
+			uloc_getParent(locale.getName(), localeNameTemp, ULOC_FULLNAME_CAPACITY, &status);
+			if (U_SUCCESS(status))
 			{
-				status = u_charsToUChars_safe(locale.getLanguage(), value, valueLength);
-			}
-			else
-			{
-				status = u_charsToUChars_safe("", value, valueLength);
+				status = u_charsToUChars_safe(localeNameTemp, value, valueLength);
+				if (U_SUCCESS(status))
+				{
+					FixupLocaleName(value, valueLength);
+				}
 			}
 			break;
+		}
 		case PercentSymbol:
 			status = GetLocaleInfoDecimalFormatSymbol(locale, DecimalFormatSymbols::kPercentSymbol, value, valueLength);
 			break;
@@ -247,11 +253,8 @@ extern "C" int32_t GetLocaleInfoString(const UChar* localeName, LocaleStringData
 			break;
 		default:
 			status = U_UNSUPPORTED_ERROR;
-			assert(false);
 			break;
 	};
-
-	assert(status != U_BUFFER_OVERFLOW_ERROR);
 
 	return UErrorCodeToBool(status);
 }
@@ -282,13 +285,13 @@ void NormalizeTimePattern(const UnicodeString *srcPattern, UnicodeString *destPa
 			destPattern->append(ch);
 			break;
 
-		case chSpace:
-		case chSpace2:
-			destPattern->append(chSpace);
+		case UCHAR_SPACE:
+		case UCHAR_NBSPACE:
+			destPattern->append(UCHAR_SPACE);
 			break;
 
 		case 'a':
-			destPattern->append("tt");
+			destPattern->append("tt"); // AM/PM
 			break;
 		}
 	}
@@ -320,7 +323,6 @@ extern "C" int32_t GetLocaleTimeFormat(const UChar* localeName, int shortFormat,
 	SimpleDateFormat* sdf = dynamic_cast<SimpleDateFormat*>(dateFormat.getAlias());
 	if (sdf == NULL)
 	{
-		assert(false);
 		return UErrorCodeToBool(U_INTERNAL_PROGRAM_ERROR);
 	}
 

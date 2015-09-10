@@ -41,9 +41,10 @@ enum CalendarId : int16_t
 
 /*
 Function:
-GetCalendarId
+GetCalendars
 
-Gets the associated CalendarId for the ICU calendar name.
+Returns the list of CalendarIds that are available for the specified locale.
 */
-CalendarId GetCalendarId(const char* calendarName);
+extern "C" int32_t GetCalendars(const UChar* localeName, CalendarId* calendars, int32_t calendarsCapacity);
+
 
