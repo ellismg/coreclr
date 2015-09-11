@@ -371,6 +371,12 @@ add_compile_options(-fms-extensions )
 #-fms-compatibility      Enable full Microsoft Visual C++ compatibility
 #-fms-extensions         Accept some non-standard constructs supported by the Microsoft compiler
 
+set(CLR_SANITIZE_FLAGS "-fsanitize=address,undefined,bounds,vla-bound,vptr,alignment,bool,integer,signed-integer-overflow,unsigned-integer-overflow")
+
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${CLR_SANITIZE_FLAGS}")
+set(CMAKE_SHARED_LINKER_FLAGS_DEBUG "${CMAKE_SHARED_LINKER_FLAGS_DEBUG} ${CLR_SANITIZE_FLAGS}")
+set(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} ${CLR_SANITIZE_FLAGS}")
+
 endif(CLR_CMAKE_PLATFORM_UNIX)
 
 add_subdirectory(src/debug/debug-pal)
