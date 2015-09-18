@@ -60,7 +60,7 @@ namespace System.Globalization
  
         private string GetLocaleInfo(LocaleStringData type)
         {
-            Contract.Assert(this.sWindowsName != null, "[CultureData.GetLocaleInfo] Expected this.sWindowsName to be populated by already");
+            Contract.Assert(this.sWindowsName != null, "[CultureData.GetLocaleInfo] Expected this.sWindowsName to be populated already");
             return GetLocaleInfo(this.sWindowsName, type);
         }
 
@@ -77,10 +77,6 @@ namespace System.Globalization
                     return string.Format("{0}{1}",
                         GetLocaleInfo(localeName, LocaleStringData.NegativeSign),
                         GetLocaleInfo(localeName, LocaleStringData.PositiveInfinitySymbol));
-
-                case LocaleStringData.ParentName:
-                    // TODO: implement
-                    return "";
             }
 
             StringBuilder sb = StringBuilderCache.Acquire(ICU_ULOC_KEYWORD_AND_VALUES_CAPACITY);
@@ -98,10 +94,15 @@ namespace System.Globalization
 
         private int GetLocaleInfo(LocaleNumberData type)
         {
-            Contract.Assert(this.sWindowsName != null, "[CultureData.GetLocaleInfo(LocaleNumberData)] Expected this.sWindowsName to be populated by already");
+            Contract.Assert(this.sWindowsName != null, "[CultureData.GetLocaleInfo(LocaleNumberData)] Expected this.sWindowsName to be populated already");
 
+            return GetLocaleIntInfo((uint)type);
+        }
+
+        private int GetLocaleIntInfo(uint type)
+        {
             int value = 0;
-            bool result = Interop.GlobalizationInterop.GetLocaleInfoInt(this.sWindowsName, (uint)type, ref value);
+            bool result = Interop.GlobalizationInterop.GetLocaleInfoInt(this.sWindowsName, type, ref value);
             if (!result)
             {
                 // Failed, just use 0
@@ -112,54 +113,71 @@ namespace System.Globalization
 
         private int[] GetLocaleInfo(LocaleGroupingData type)
         {
-            // TODO: Implement this fully.
-            switch (type)
+            Contract.Assert(this.sWindowsName != null, "[CultureData.GetLocaleInfo(LocaleGroupingData)] Expected this.sWindowsName to be populated already");
+
+            int primaryGroupingSize = 0;
+            int secondaryGroupingSize = 0;
+            bool result = Interop.GlobalizationInterop.GetLocaleInfoGroupingSizes(this.sWindowsName, (uint)type, ref primaryGroupingSize, ref secondaryGroupingSize);
+            if (!result)
             {
-                case LocaleGroupingData.Digit:
-                    return new int[] { 3 };
-                case LocaleGroupingData.Monetary:
-                    return new int[] { 3 };
-                default:
-                    Contract.Assert(false, "Unmatched case in GetLocaleInfo(LocaleGroupingData)");
-                    throw new NotImplementedException();
+                Contract.Assert(false, "[CultureData.GetLocaleInfo(LocaleGroupingData type)] failed");
             }
+
+            if (secondaryGroupingSize == 0)
+            {
+                return new int[] { primaryGroupingSize };
+            }
+
+            return new int[] { primaryGroupingSize, secondaryGroupingSize };
         }
 
         private string GetTimeFormatString()
         {
-            // TODO: Implement this fully.
-            return "HH:mm:ss";
+            return GetTimeFormatString(false);
+        }
+
+        private string GetTimeFormatString(bool shortFormat)
+        {
+            Contract.Assert(this.sWindowsName != null, "[CultureData.GetTimeFormatString(bool shortFormat)] Expected this.sWindowsName to be populated already");
+
+            StringBuilder sb = StringBuilderCache.Acquire(ICU_ULOC_KEYWORD_AND_VALUES_CAPACITY);
+
+            bool result = Interop.GlobalizationInterop.GetLocaleTimeFormat(this.sWindowsName, shortFormat, sb, sb.Capacity);
+            if (!result)
+            {
+                // Failed, just use empty string
+                StringBuilderCache.Release(sb);
+                Contract.Assert(false, "[CultureData.GetTimeFormatString(bool shortFormat)] Failed");
+                return String.Empty;
+            }
+            return StringBuilderCache.GetStringAndRelease(sb);
         }
 
         private int GetFirstDayOfWeek()
         {
-            // TODO: Implement this fully.
-            return 0;
+            Contract.Assert(this.sWindowsName != null, "[CultureData.GetFirstDayOfWeek()] Expected this.sWindowsName to be populated already");
+
+            const uint LOCALE_IFIRSTDAYOFWEEK = 0x0000100C;
+            int value = this.GetLocaleIntInfo(LOCALE_IFIRSTDAYOFWEEK);
+            return value;
         }
 
         private String[] GetTimeFormats()
         {
-            // TODO: Implement this fully.
-            return new string[] { "HH:mm:ss" };
+            string format = GetTimeFormatString(false);
+            return new string[] { format };
         }
 
         private String[] GetShortTimeFormats()
         {
-            // TODO: Implement this fully.
-            return new string[] { "HH:mm", "hh:mm tt", "H:mm", "h:mm tt" };
+            string format = GetTimeFormatString(true);
+            return new string[] { format };
         }
 
-        // Enumerate all system cultures and then try to find out which culture has 
-        // region name match the requested region name
         private static CultureData GetCultureDataFromRegionName(String regionName)
         {
-            // TODO: Implement this fully.
-            if (regionName == "")
-            {
-                return CultureInfo.InvariantCulture.m_cultureData;
-            }
-
-            throw new NotImplementedException();
+            // no support to lookup by region name, other than the hard-coded list in CultureData
+            return null;
         }
 
         private static string GetLanguageDisplayName(string cultureName)
@@ -169,8 +187,8 @@ namespace System.Globalization
 
         private static string GetRegionDisplayName(string isoCountryCode)
         {
-            // TODO: Implement this fully.
-            return "";
+            // use the fallback which is to return NativeName
+            return null;
         }
 
         private static CultureInfo GetUserDefaultCulture()
@@ -180,8 +198,10 @@ namespace System.Globalization
 
         private static bool IsCustomCultureId(int cultureId)
         {
-            // TODO: Implement this fully.
-            return false;
+            const int LOCALE_CUSTOM_DEFAULT = 0x0c00;
+            const int LOCALE_CUSTOM_UNSPECIFIED = 0x1000;
+
+            return (cultureId == LOCALE_CUSTOM_DEFAULT || cultureId == LOCALE_CUSTOM_UNSPECIFIED);
         }
     }
 }
