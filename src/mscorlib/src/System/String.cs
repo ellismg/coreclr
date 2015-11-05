@@ -1296,7 +1296,16 @@ namespace System {
             }
             return TrimHelper(trimChars,TrimBoth);
         }
-    
+
+        [Pure]
+        public String Trim(char c) {
+            Contract.Ensures(Contract.Result<String>() != null);
+            Contract.EndContractBlock();
+
+            // TODO: Make this better by not allocating an array!
+            return Trim(new char[] { c });
+        }
+
         // Removes a string of characters from the beginning of this string.
         public String TrimStart(params char[] trimChars) {
             if (null==trimChars || trimChars.Length == 0) {
@@ -2704,7 +2713,6 @@ namespace System {
             return TrimHelper(TrimBoth);        
         }
 
-       
         [System.Security.SecuritySafeCritical]  // auto-generated
         private String TrimHelper(int trimType) {
             //end will point to the first non-trimmed character on the right
