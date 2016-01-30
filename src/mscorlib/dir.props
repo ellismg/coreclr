@@ -1,0 +1,77 @@
+<Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!--
+    $(OS) is set to Unix/Windows_NT. This comes from an environment variable on Windows and MSBuild on Unix.
+  -->
+  <PropertyGroup>
+    <OsEnvironment Condition="'$(OsEnvironment)'=='' and '$(OS)'=='OSX'">Unix</OsEnvironment>
+    <OsEnvironment Condition="'$(OsEnvironment)'==''">$(OS)</OsEnvironment>
+  </PropertyGroup>
+  
+  <!-- Build Tools Versions -->
+  <PropertyGroup>
+    <RoslynVersion>1.0.0-rc3-20150510-01</RoslynVersion>
+    <RoslynPackageName>Microsoft.Net.ToolsetCompilers</RoslynPackageName>
+  </PropertyGroup>
+  
+  <!-- Common properties -->
+  <PropertyGroup>
+    <!-- Set basic properties and normalize -->
+    
+    <BuildArch>$(__BuildArch)</BuildArch>
+    <BuildArch Condition="'$(__BuildArch)'==''">x64</BuildArch>
+    <BuildArch Condition="'$(__BuildArch)' == 'amd64'">x64</BuildArch>
+
+    <BuildType Condition="'$(__BuildType)'==''">Debug</BuildType>
+    <BuildType Condition="'$(__BuildType)' == 'debug'">Debug</BuildType>
+    <BuildType Condition="'$(__BuildType)' == 'release'">Release</BuildType>
+    <BuildType Condition="'$(__BuildType)' == 'checked'">Checked</BuildType>
+
+    <BuildOS>$(__BuildOS)</BuildOS>
+    <BuildOS Condition="'$(__BuildOS)' == ''">Windows_NT</BuildOS>
+
+    <ProjectDir>$(__ProjectDir)/</ProjectDir>
+    <ProjectDir Condition="'$(__ProjectDir)'==''">$(MSBuildThisFileDirectory)../../</ProjectDir>
+
+    <SourceDir>$(__SourceDir)/</SourceDir>
+    <SourceDir Condition="'$(__SourceDir)'==''">$(ProjectDir)src/</SourceDir>
+
+    <PackagesDir>$(__PackagesDir)/</PackagesDir>
+    <PackagesDir Condition="'$(__PackagesDir)'==''">$(ProjectDir)packages/</PackagesDir>
+
+    <RootBinDir>$(__RootBinDir)/</RootBinDir>
+    <RootBinDir Condition="'$(__RootBinDir)'==''">$(ProjectDir)bin/</RootBinDir>
+
+    <BinDir>$(__BinDir)/</BinDir>
+    <BinDir Condition="'$(__BinDir)'==''">$(RootBinDir)Product/$(BuildOS).$(BuildArch).$(BuildType)/</BinDir>
+
+    <IntermediateOutputRootPath Condition="'$(IntermediateOutputRootPath)' == ''">$(__IntermediatesDir)/</IntermediateOutputRootPath>
+
+    <ToolRuntimePath Condition="'$(ToolRuntimePath)'==''">$(ProjectDir)Tools/</ToolRuntimePath>
+    <ToolsDir Condition="'$(UseToolRuntimeForToolsDir)'=='true'">$(ToolRuntimePath)</ToolsDir>
+    <ToolsDir Condition="'$(ToolsDir)'==''">$(ProjectDir)Tools/</ToolsDir>
+    <DotnetCliPath Condition="'$(DotnetCliPath)'==''">$(ToolRuntimePath)dotnetcli/bin/</DotnetCliPath>
+    <BuildToolsTaskDir Condition="'$(BuildToolsTargets45)' == 'true'">$(ToolsDir)net45/</BuildToolsTaskDir>
+  </PropertyGroup>
+
+  <!-- Import Build tools common props file where repo-independent properties are found -->
+  <Import Project="$(ToolsDir)Build.Common.props" />
+
+  <!--
+    Set up Roslyn predefines
+  -->
+  <PropertyGroup>
+    <RoslynPackageDir>$(PackagesDir)/$(RoslynPackageName).$(RoslynVersion)/</RoslynPackageDir>
+    <RoslynPropsFile>$(RoslynPackageDir)build/Microsoft.Net.ToolsetCompilers.props</RoslynPropsFile>
+  </PropertyGroup>
+
+  <!-- Setup common target properties that we use to conditionally include sources -->
+  <PropertyGroup>
+    <TargetsFreeBSD Condition="'$(BuildOS)' == 'FreeBSD'">true</TargetsFreeBSD>
+    <TargetsLinux Condition="'$(BuildOS)' == 'Linux'">true</TargetsLinux>
+    <TargetsOSX Condition="'$(BuildOS)' == 'OSX'">true</TargetsOSX>
+    <TargetsWindows Condition="'$(BuildOS)' == 'Windows_NT'">true</TargetsWindows>
+    
+    <TargetsUnix Condition="'$(TargetsFreeBSD)' == 'true' or '$(TargetsLinux)' == 'true' or '$(TargetsOSX)' == 'true'">true</TargetsUnix>
+  </PropertyGroup>
+</Project>

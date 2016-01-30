@@ -3,7 +3,7 @@
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   
   <!-- Include common build properties -->
-  <Import Project="..\..\dir.props" />
+  <Import Project="dir.props" />
  
   <!-- Compilation options -->
   <PropertyGroup>
@@ -170,10 +170,7 @@
     </EmbeddedResource>
   </ItemGroup>
 
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.Targets" />
-
-  <!-- Import signing tools -->
-  <Import Condition="Exists('$(ToolsDir)\sign.targets')" Project="$(ToolsDir)\sign.targets" />
+  <Import Project="$(ToolsDir)Build.Common.targets" />
 
   <!-- Overwrite the key that we are going to use for signing -->
   <PropertyGroup>
