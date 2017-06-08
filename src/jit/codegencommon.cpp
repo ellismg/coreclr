@@ -476,7 +476,7 @@ void CodeGenInterface::genUpdateLife(VARSET_VALARG_TP newLife)
 //
 VARSET_VALRET_TP CodeGen::genUpdateLiveSetForward(GenTreePtr tree)
 {
-    VARSET_TP  VARSET_INIT(compiler, startLiveSet, compiler->compCurLife);
+    VARSET_TP  startLiveSet(VarSetOps::MakeCopy(compiler, compiler->compCurLife));
     GenTreePtr startNode;
     assert(tree != compiler->compCurLifeTree);
     if (compiler->compCurLifeTree == nullptr)
@@ -775,7 +775,7 @@ void Compiler::compUpdateLifeVar(GenTreePtr tree, VARSET_TP* pLastUseVars)
 #endif // DEBUG
 
     compCurLifeTree = tree;
-    VARSET_TP VARSET_INIT(this, newLife, compCurLife);
+    VARSET_TP newLife(VarSetOps::MakeCopy(this, compCurLife));
 
     // By codegen, a struct may not be TYP_STRUCT, so we have to
     // check lvPromoted, for the case where the fields are being
@@ -799,7 +799,7 @@ void Compiler::compUpdateLifeVar(GenTreePtr tree, VARSET_TP* pLastUseVars)
     // For RyuJIT backend, since all tracked vars are register candidates, but not all are in registers at all times,
     // we maintain two separate sets of variables - the total set of variables that are either
     // born or dying here, and the subset of those that are on the stack
-    VARSET_TP VARSET_INIT_NOCOPY(stackVarDeltaSet, VarSetOps::MakeEmpty(this));
+    VARSET_TP stackVarDeltaSet(VarSetOps::MakeEmpty(this));
 #endif // !LEGACY_BACKEND
 
     if (isBorn || isDying)
@@ -807,7 +807,7 @@ void Compiler::compUpdateLifeVar(GenTreePtr tree, VARSET_TP* pLastUseVars)
         bool hasDeadTrackedFieldVars = false; // If this is true, then, for a LDOBJ(ADDR(<promoted struct local>)),
         VARSET_TP* deadTrackedFieldVars =
             nullptr; // *deadTrackedFieldVars indicates which tracked field vars are dying.
-        VARSET_TP VARSET_INIT_NOCOPY(varDeltaSet, VarSetOps::MakeEmpty(this));
+        VARSET_TP varDeltaSet(VarSetOps::MakeEmpty(this));
 
         if (varDsc->lvTracked)
         {
@@ -953,9 +953,8 @@ void Compiler::compUpdateLifeVar(GenTreePtr tree, VARSET_TP* pLastUseVars)
             // Only add vars to the gcInfo.gcVarPtrSetCur if they are currently on stack, since the
             // gcInfo.gcTrkStkPtrLcls
             // includes all TRACKED vars that EVER live on the stack (i.e. are not always in a register).
-            VARSET_TP VARSET_INIT_NOCOPY(gcTrkStkDeltaSet,
-                                         VarSetOps::Intersection(this, codeGen->gcInfo.gcTrkStkPtrLcls,
-                                                                 stackVarDeltaSet));
+            VARSET_TP gcTrkStkDeltaSet(
+                VarSetOps::Intersection(this, codeGen->gcInfo.gcTrkStkPtrLcls, stackVarDeltaSet));
             if (!VarSetOps::IsEmpty(this, gcTrkStkDeltaSet))
             {
 #ifdef DEBUG
@@ -990,8 +989,7 @@ void Compiler::compUpdateLifeVar(GenTreePtr tree, VARSET_TP* pLastUseVars)
 #ifdef DEBUG
             if (verbose)
             {
-                VARSET_TP VARSET_INIT_NOCOPY(gcVarPtrSetNew,
-                                             VarSetOps::Intersection(this, newLife, codeGen->gcInfo.gcTrkStkPtrLcls));
+                VARSET_TP gcVarPtrSetNew(VarSetOps::Intersection(this, newLife, codeGen->gcInfo.gcTrkStkPtrLcls));
                 if (!VarSetOps::Equal(this, codeGen->gcInfo.gcVarPtrSetCur, gcVarPtrSetNew))
                 {
                     printf("\t\t\t\t\t\t\tGCvars: ");
@@ -1070,12 +1068,10 @@ void Compiler::compChangeLife(VARSET_VALARG_TP newLife DEBUGARG(GenTreePtr tree)
     /* Figure out which variables are becoming live/dead at this point */
 
     // deadSet = compCurLife - newLife
-    VARSET_TP VARSET_INIT(this, deadSet, compCurLife);
-    VarSetOps::DiffD(this, deadSet, newLife);
+    VARSET_TP deadSet(VarSetOps::Diff(this, compCurLife, newLife));
 
     // bornSet = newLife - compCurLife
-    VARSET_TP VARSET_INIT(this, bornSet, newLife);
-    VarSetOps::DiffD(this, bornSet, compCurLife);
+    VARSET_TP bornSet(VarSetOps::Diff(this, newLife, compCurLife));
 
     /* Can't simultaneously become live and dead at the same time */
 
@@ -1997,7 +1993,7 @@ AGAIN:
         }
 #endif // LEGACY_BACKEND
 
-#ifdef _TARGET_ARM64_
+#if defined(_TARGET_ARM64_) || (defined(_TARGET_ARM_) && !defined(LEGACY_BACKEND))
         if (cns == 0)
 #endif
         {
@@ -2017,8 +2013,8 @@ AGAIN:
 
                     goto AGAIN;
 
-#if SCALED_ADDR_MODES && !defined(_TARGET_ARM64_)
-                // TODO-ARM64-CQ: For now we don't try to create a scaled index on ARM64.
+#if SCALED_ADDR_MODES && !defined(_TARGET_ARM64_) && !(defined(_TARGET_ARM_) && !defined(LEGACY_BACKEND))
+                // TODO-ARM64-CQ, TODO-ARM-CQ: For now we don't try to create a scaled index.
                 case GT_MUL:
                     if (op1->gtOverflow())
                     {
@@ -2079,8 +2075,8 @@ AGAIN:
 
         switch (op1->gtOper)
         {
-#ifndef _TARGET_ARM64_
-            // TODO-ARM64-CQ: For now we don't try to create a scaled index on ARM64.
+#if !defined(_TARGET_ARM64_) && !(defined(_TARGET_ARM_) && !defined(LEGACY_BACKEND))
+            // TODO-ARM64-CQ, TODO-ARM-CQ: For now we don't try to create a scaled index.
             case GT_ADD:
 
                 if (op1->gtOverflow())
@@ -2141,7 +2137,7 @@ AGAIN:
                 break;
 
 #endif // SCALED_ADDR_MODES
-#endif // !_TARGET_ARM64_
+#endif // !_TARGET_ARM64_ && !(_TARGET_ARM_ && !LEGACY_BACKEND)
 
             case GT_NOP:
 
@@ -2170,8 +2166,8 @@ AGAIN:
         noway_assert(op2);
         switch (op2->gtOper)
         {
-#ifndef _TARGET_ARM64_
-            // TODO-ARM64-CQ: For now we don't try to create a scaled index on ARM64.
+#if !defined(_TARGET_ARM64_) && !(defined(_TARGET_ARM_) && !defined(LEGACY_BACKEND))
+            // TODO-ARM64-CQ, TODO-ARM-CQ: For now we don't try to create a scaled index.
             case GT_ADD:
 
                 if (op2->gtOverflow())
@@ -2228,7 +2224,7 @@ AGAIN:
                 break;
 
 #endif // SCALED_ADDR_MODES
-#endif // !_TARGET_ARM64_
+#endif // !_TARGET_ARM64_ && !(_TARGET_ARM_ && !LEGACY_BACKEND)
 
             case GT_NOP:
 
@@ -2262,8 +2258,8 @@ AGAIN:
 
     noway_assert(op2);
 
-#ifndef _TARGET_ARM64_
-    // TODO-ARM64-CQ: For now we don't try to create a scaled index on ARM64.
+#if !defined(_TARGET_ARM64_) && !(defined(_TARGET_ARM_) && !defined(LEGACY_BACKEND))
+    // TODO-ARM64-CQ, TODO-ARM-CQ: For now we don't try to create a scaled index.
     switch (op2->gtOper)
     {
         case GT_ADD:
@@ -2323,7 +2319,7 @@ AGAIN:
         default:
             break;
     }
-#endif // !_TARGET_ARM64_
+#endif // !_TARGET_ARM64_ && !(_TARGET_ARM_ && !LEGACY_BACKEND)
 
 ADD_OP12:
 
@@ -6359,6 +6355,53 @@ void CodeGen::genFreeLclFrame(unsigned frameSize, /* IN OUT */ bool* pUnwindStar
 
 /*-----------------------------------------------------------------------------
  *
+ *  Move of relocatable displacement value to register
+ */
+void CodeGen::genMov32RelocatableDisplacement(BasicBlock* block, regNumber reg)
+{
+    getEmitter()->emitIns_R_L(INS_movw, EA_4BYTE_DSP_RELOC, block, reg);
+    getEmitter()->emitIns_R_L(INS_movt, EA_4BYTE_DSP_RELOC, block, reg);
+
+    if (compiler->opts.jitFlags->IsSet(JitFlags::JIT_FLAG_RELATIVE_CODE_RELOCS))
+    {
+        getEmitter()->emitIns_R_R_R(INS_add, EA_4BYTE_DSP_RELOC, reg, reg, REG_PC);
+    }
+}
+
+/*-----------------------------------------------------------------------------
+ *
+ *  Move of relocatable data-label to register
+ */
+void CodeGen::genMov32RelocatableDataLabel(unsigned value, regNumber reg)
+{
+    getEmitter()->emitIns_R_D(INS_movw, EA_HANDLE_CNS_RELOC, value, reg);
+    getEmitter()->emitIns_R_D(INS_movt, EA_HANDLE_CNS_RELOC, value, reg);
+
+    if (compiler->opts.jitFlags->IsSet(JitFlags::JIT_FLAG_RELATIVE_CODE_RELOCS))
+    {
+        getEmitter()->emitIns_R_R_R(INS_add, EA_HANDLE_CNS_RELOC, reg, reg, REG_PC);
+    }
+}
+
+/*-----------------------------------------------------------------------------
+ *
+ * Move of relocatable immediate to register
+ */
+void CodeGen::genMov32RelocatableImmediate(emitAttr size, unsigned value, regNumber reg)
+{
+    _ASSERTE(EA_IS_RELOC(size));
+
+    getEmitter()->emitIns_R_I(INS_movw, size, reg, value);
+    getEmitter()->emitIns_R_I(INS_movt, size, reg, value);
+
+    if (compiler->opts.jitFlags->IsSet(JitFlags::JIT_FLAG_RELATIVE_CODE_RELOCS))
+    {
+        getEmitter()->emitIns_R_R_R(INS_add, size, reg, reg, REG_PC);
+    }
+}
+
+/*-----------------------------------------------------------------------------
+ *
  *  Returns register mask to push/pop to allocate a small stack frame,
  *  instead of using "sub sp" / "add sp". Returns RBM_NONE if either frame size
  *  is zero, or if we should use "sub sp" / "add sp" instead of push/pop.
@@ -8007,7 +8050,6 @@ void CodeGen::genReserveProlog(BasicBlock* block)
 
 void CodeGen::genReserveEpilog(BasicBlock* block)
 {
-    VARSET_TP VARSET_INIT(compiler, gcrefVarsArg, getEmitter()->emitThisGCrefVars);
     regMaskTP gcrefRegsArg = gcInfo.gcRegGCrefSetCur;
     regMaskTP byrefRegsArg = gcInfo.gcRegByrefSetCur;
 
@@ -8040,7 +8082,8 @@ void CodeGen::genReserveEpilog(BasicBlock* block)
     JITDUMP("Reserving epilog IG for block BB%02u\n", block->bbNum);
 
     assert(block != nullptr);
-    bool last = (block->bbNext == nullptr);
+    const VARSET_TP& gcrefVarsArg(getEmitter()->emitThisGCrefVars);
+    bool             last = (block->bbNext == nullptr);
     getEmitter()->emitCreatePlaceholderIG(IGPT_EPILOG, block, gcrefVarsArg, gcrefRegsArg, byrefRegsArg, last);
 }
 
@@ -10119,11 +10162,12 @@ void CodeGen::genCaptureFuncletPrologEpilogInfo()
 #endif // DEBUG
 
         assert(PSP_slot_CallerSP_offset < 0);
-        assert(compiler->lvaPSPSym != BAD_VAR_NUM);
-        assert(PSP_slot_CallerSP_offset == compiler->lvaGetCallerSPRelativeOffset(compiler->lvaPSPSym)); // same offset
-                                                                                                         // used in main
-                                                                                                         // function and
-                                                                                                         // funclet!
+        if (compiler->lvaPSPSym != BAD_VAR_NUM)
+        {
+            assert(PSP_slot_CallerSP_offset ==
+                   compiler->lvaGetCallerSPRelativeOffset(compiler->lvaPSPSym)); // same offset used in main
+                                                                                 // function and funclet!
+        }
     }
 }
 

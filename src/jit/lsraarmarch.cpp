@@ -79,28 +79,7 @@ void Lowering::TreeNodeInfoInitCmp(GenTreePtr tree)
     TreeNodeInfo* info = &(tree->gtLsraInfo);
 
     info->srcCount = 2;
-    info->dstCount = 1;
-
-#ifdef _TARGET_ARM_
-
-    GenTreePtr op1     = tree->gtOp.gtOp1;
-    GenTreePtr op2     = tree->gtOp.gtOp2;
-    var_types  op1Type = op1->TypeGet();
-    var_types  op2Type = op2->TypeGet();
-
-    // Long compares will consume GT_LONG nodes, each of which produces two results.
-    // Thus for each long operand there will be an additional source.
-    // TODO-ARM-CQ: Mark hiOp2 and loOp2 as contained if it is a constant.
-    if (varTypeIsLong(op1Type))
-    {
-        info->srcCount++;
-    }
-    if (varTypeIsLong(op2Type))
-    {
-        info->srcCount++;
-    }
-
-#endif // _TARGET_ARM_
+    info->dstCount = tree->OperIs(GT_CMP) ? 0 : 1;
 
     CheckImmedAndMakeContained(tree, tree->gtOp.gtOp2);
 }
@@ -182,6 +161,7 @@ void Lowering::TreeNodeInfoInitIndir(GenTreePtr indirTree)
     unsigned   mul;
     bool       rev;
     bool       modifiedSources = false;
+    bool       makeContained   = true;
 
     if ((addr->OperGet() == GT_LEA) && IsSafeToContainMem(indirTree, addr))
     {
@@ -190,10 +170,36 @@ void Lowering::TreeNodeInfoInitIndir(GenTreePtr indirTree)
         index                = lea->Index();
         cns                  = lea->gtOffset;
 
-        m_lsra->clearOperandCounts(addr);
-        // The srcCount is decremented because addr is now "contained",
-        // then we account for the base and index below, if they are non-null.
-        info->srcCount--;
+#ifdef _TARGET_ARM_
+        // ARM floating-point load/store doesn't support a form similar to integer
+        // ldr Rdst, [Rbase + Roffset] with offset in a register. The only supported
+        // form is vldr Rdst, [Rbase + imm] with a more limited constraint on the imm.
+        if (lea->HasIndex() || !emitter::emitIns_valid_imm_for_vldst_offset(cns))
+        {
+            if (indirTree->OperGet() == GT_STOREIND)
+            {
+                if (varTypeIsFloating(indirTree->AsStoreInd()->Data()))
+                {
+                    makeContained = false;
+                }
+            }
+            else if (indirTree->OperGet() == GT_IND)
+            {
+                if (varTypeIsFloating(indirTree))
+                {
+                    makeContained = false;
+                }
+            }
+        }
+#endif
+
+        if (makeContained)
+        {
+            m_lsra->clearOperandCounts(addr);
+            // The srcCount is decremented because addr is now "contained",
+            // then we account for the base and index below, if they are non-null.
+            info->srcCount--;
+        }
     }
     else if (comp->codeGen->genCreateAddrMode(addr, -1, true, 0, &rev, &base, &index, &mul, &cns, true /*nogen*/) &&
              !(modifiedSources = AreSourcesPossiblyModifiedLocals(indirTree, base, index)))
@@ -204,8 +210,6 @@ void Lowering::TreeNodeInfoInitIndir(GenTreePtr indirTree)
 
         assert(base != addr);
         m_lsra->clearOperandCounts(addr);
-
-        GenTreePtr arrLength = nullptr;
 
         // Traverse the computation below GT_IND to find the operands
         // for the addressing mode, marking the various constants and
@@ -283,11 +287,15 @@ void Lowering::TreeNodeInfoInitIndir(GenTreePtr indirTree)
         base = addr;
     }
 
+    if (!makeContained)
+    {
+        return;
+    }
+
     if (base != nullptr)
     {
         info->srcCount++;
     }
-
     if (index != nullptr && !modifiedSources)
     {
         info->srcCount++;
@@ -303,14 +311,6 @@ void Lowering::TreeNodeInfoInitIndir(GenTreePtr indirTree)
     else if (!emitter::emitIns_valid_imm_for_ldst_offset(cns, emitTypeSize(indirTree)))
     {
         // This offset can't be contained in the ldr/str instruction, so we need an internal register
-        info->internalIntCount = 1;
-    }
-    else if (varTypeIsFloating(indirTree))
-    {
-        // TODO-ARM: We can narrow the condition where an internal register is really required.
-        //           For example, we don't need an internal regsiter where offset can be contained.
-
-        // For float ldr/str(vldr/vstr), we need an internal register to compute address.
         info->internalIntCount = 1;
     }
 }
@@ -558,6 +558,14 @@ void Lowering::TreeNodeInfoInitCall(GenTreeCall* call)
 
                 // Update argReg for the next putarg_reg (if any)
                 argReg = genRegArgNext(argReg);
+
+#if defined(_TARGET_ARM_)
+                // A double register is modelled as an even-numbered single one
+                if (entry->Current()->TypeGet() == TYP_DOUBLE)
+                {
+                    argReg = genRegArgNext(argReg);
+                }
+#endif // _TARGET_ARM_
             }
         }
         else

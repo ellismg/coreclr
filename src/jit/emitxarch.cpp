@@ -2738,7 +2738,7 @@ void emitter::emitInsMov(instruction ins, emitAttr attr, GenTree* node)
         case GT_STORE_LCL_VAR:
         {
             GenTreeLclVarCommon* varNode = node->AsLclVarCommon();
-            GenTree*             data    = varNode->gtOp.gtOp1->gtEffectiveVal();
+            GenTree*             data    = varNode->gtOp.gtOp1;
             codeGen->inst_set_SV_var(varNode);
             assert(varNode->gtRegNum == REG_NA); // stack store
 
@@ -2878,12 +2878,12 @@ regNumber emitter::emitInsBinary(instruction ins, emitAttr attr, GenTree* dst, G
     GenTreeLclVar* lclVar = nullptr;
     if (src->isLclVarUsedFromMemory())
     {
-        assert(src->IsRegOptional());
+        assert(src->IsRegOptional() || !emitComp->lvaTable[src->gtLclVar.gtLclNum].lvIsRegCandidate());
         lclVar = src->AsLclVar();
     }
     if (dst->isLclVarUsedFromMemory())
     {
-        assert(dst->IsRegOptional());
+        assert(dst->IsRegOptional() || !emitComp->lvaTable[dst->gtLclVar.gtLclNum].lvIsRegCandidate());
         lclVar = dst->AsLclVar();
     }
 
@@ -10368,7 +10368,7 @@ size_t emitter::emitOutputInstr(insGroup* ig, instrDesc* id, BYTE** dp)
     assert(ins != INS_imul || size >= EA_4BYTE);                  // Has no 'w' bit
     assert(instrIs3opImul(id->idIns()) == 0 || size >= EA_4BYTE); // Has no 'w' bit
 
-    VARSET_TP VARSET_INIT_NOCOPY(GCvars, VarSetOps::UninitVal());
+    VARSET_TP GCvars(VarSetOps::UninitVal());
 
     // What instruction format have we got?
     switch (id->idInsFmt())

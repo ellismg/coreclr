@@ -10,14 +10,22 @@ namespace System.Runtime.CompilerServices
         /// Indicates that this version of runtime supports default interface method implementations.
         /// </summary>
         public const string DefaultImplementationsOfInterfaces = nameof(DefaultImplementationsOfInterfaces);
+        /// Name of the Portable PDB feature.
+        /// </summary>
+        public const string PortablePdb = nameof(PortablePdb);
 
         /// <summary>
         /// Checks whether a certain feature is supported by the Runtime.
         /// </summary>
         public static bool IsSupported(string feature)
         {
-            if (feature == DefaultImplementationsOfInterfaces)
-                return true;
+            switch (feature)
+            {
+                case nameof(DefaultImplementationsOfInterfaces):
+                    return true;
+                case nameof(PortablePdb):
+                    return true;
+            }
 
             return false;
         }

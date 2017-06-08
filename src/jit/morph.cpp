@@ -1383,10 +1383,18 @@ void fgArgInfo::SplitArg(unsigned argNum, unsigned numRegs, unsigned numSlots)
     assert(numRegs > 0);
     assert(numSlots > 0);
 
-    curArgTabEntry->isSplit  = true;
-    curArgTabEntry->numRegs  = numRegs;
-    curArgTabEntry->numSlots = numSlots;
-
+    if (argsComplete)
+    {
+        assert(curArgTabEntry->isSplit == true);
+        assert(curArgTabEntry->numRegs == numRegs);
+        assert(curArgTabEntry->numSlots == numSlots);
+    }
+    else
+    {
+        curArgTabEntry->isSplit  = true;
+        curArgTabEntry->numRegs  = numRegs;
+        curArgTabEntry->numSlots = numSlots;
+    }
     nextSlotNum += numSlots;
 }
 
@@ -2040,7 +2048,7 @@ GenTreePtr Compiler::fgMakeTmpArgNode(
     if (varTypeIsStruct(type))
     {
 
-#if defined(_TARGET_AMD64_) || defined(_TARGET_ARM64_)
+#if defined(_TARGET_AMD64_) || defined(_TARGET_ARM64_) || defined(_TARGET_ARM_)
 
 #ifdef FEATURE_UNIX_AMD64_STRUCT_PASSING
 
@@ -4138,7 +4146,7 @@ GenTreeCall* Compiler::fgMorphArgs(GenTreeCall* call)
                             NYI_ARM("Struct split between integer registers and stack");
 #endif // !LEGACY_BACKEND
                             // This indicates a partial enregistration of a struct type
-                            assert((isStructArg) || argx->OperIsCopyBlkOp() ||
+                            assert((isStructArg) || argx->OperIsFieldList() || argx->OperIsCopyBlkOp() ||
                                    (argx->gtOper == GT_COMMA && (args->gtFlags & GTF_ASG)));
                             unsigned numRegsPartial = size - (intArgRegNum - MAX_REG_ARG);
                             assert((unsigned char)numRegsPartial == numRegsPartial);
@@ -6590,6 +6598,13 @@ GenTreePtr Compiler::fgMorphField(GenTreePtr tree, MorphAddrContext* mac)
 
             GenTreePtr tlsRef = gtNewIconHandleNode(WIN32_TLS_SLOTS, GTF_ICON_TLS_HDL);
 
+            // Translate GTF_FLD_INITCLASS to GTF_ICON_INITCLASS
+            if ((tree->gtFlags & GTF_FLD_INITCLASS) != 0)
+            {
+                tree->gtFlags &= ~GTF_FLD_INITCLASS;
+                tlsRef->gtFlags |= GTF_ICON_INITCLASS;
+            }
+
             tlsRef = gtNewOperNode(GT_IND, TYP_I_IMPL, tlsRef);
 
             if (dllRef != nullptr)
@@ -6644,6 +6659,12 @@ GenTreePtr Compiler::fgMorphField(GenTreePtr tree, MorphAddrContext* mac)
                     FieldSeqNode* fieldSeq =
                         fieldMayOverlap ? FieldSeqStore::NotAField() : GetFieldSeqStore()->CreateSingleton(symHnd);
                     addr->gtIntCon.gtFieldSeq = fieldSeq;
+                    // Translate GTF_FLD_INITCLASS to GTF_ICON_INITCLASS
+                    if ((tree->gtFlags & GTF_FLD_INITCLASS) != 0)
+                    {
+                        tree->gtFlags &= ~GTF_FLD_INITCLASS;
+                        addr->gtFlags |= GTF_ICON_INITCLASS;
+                    }
 
                     tree->SetOper(GT_IND);
                     // The GTF_FLD_NULLCHECK is the same bit as GTF_IND_ARR_LEN.
@@ -6674,6 +6695,13 @@ GenTreePtr Compiler::fgMorphField(GenTreePtr tree, MorphAddrContext* mac)
             else
             {
                 GenTreePtr addr = gtNewIconHandleNode((size_t)pFldAddr, GTF_ICON_STATIC_HDL);
+
+                // Translate GTF_FLD_INITCLASS to GTF_ICON_INITCLASS
+                if ((tree->gtFlags & GTF_FLD_INITCLASS) != 0)
+                {
+                    tree->gtFlags &= ~GTF_FLD_INITCLASS;
+                    addr->gtFlags |= GTF_ICON_INITCLASS;
+                }
 
                 // There are two cases here, either the static is RVA based,
                 // in which case the type of the FIELD node is not a GC type
@@ -7130,8 +7158,11 @@ void Compiler::fgMorphTailCall(GenTreeCall* call)
 
         /* Get the appropriate vtable chunk */
 
-        add  = gtNewOperNode(GT_ADD, TYP_I_IMPL, vtbl, gtNewIconNode(vtabOffsOfIndirection, TYP_I_IMPL));
-        vtbl = gtNewOperNode(GT_IND, TYP_I_IMPL, add);
+        if (vtabOffsOfIndirection != CORINFO_VIRTUALCALL_NO_CHUNK)
+        {
+            add  = gtNewOperNode(GT_ADD, TYP_I_IMPL, vtbl, gtNewIconNode(vtabOffsOfIndirection, TYP_I_IMPL));
+            vtbl = gtNewOperNode(GT_IND, TYP_I_IMPL, add);
+        }
 
         /* Now the appropriate vtable slot */
 
@@ -8117,8 +8148,16 @@ GenTreePtr Compiler::fgMorphCall(GenTreeCall* call)
             if (stmtExpr->gtOper == GT_ASG && info.compRetType != TYP_VOID)
             {
                 noway_assert(stmtExpr->gtGetOp1()->OperIsLocal());
+
+                GenTreePtr treeWithLcl = retExpr->gtGetOp1();
+                while (treeWithLcl->gtOper == GT_CAST)
+                {
+                    noway_assert(!treeWithLcl->gtOverflow());
+                    treeWithLcl = treeWithLcl->gtGetOp1();
+                }
+
                 noway_assert(stmtExpr->gtGetOp1()->AsLclVarCommon()->gtLclNum ==
-                             retExpr->gtGetOp1()->AsLclVarCommon()->gtLclNum);
+                             treeWithLcl->AsLclVarCommon()->gtLclNum);
             }
 
             fgRemoveStmt(compCurBB, nextMorphStmt);
@@ -13202,26 +13241,14 @@ GenTreePtr Compiler::fgMorphSmpOp(GenTreePtr tree, MorphAddrContext* mac)
                         varTypeIsStruct(tempTyp) || (tempTyp == TYP_BLK) || (tempTyp == TYP_LCLBLK);
                     const unsigned varSize = useExactSize ? varDsc->lvExactSize : genTypeSize(temp);
 
+                    // Make sure we do not enregister this lclVar.
+                    lvaSetVarDoNotEnregister(lclNum DEBUGARG(DNER_LocalField));
+
                     // If the size of the load is greater than the size of the lclVar, we cannot fold this access into
                     // a lclFld: the access represented by an lclFld node must begin at or after the start of the
                     // lclVar and must not extend beyond the end of the lclVar.
-                    if ((ival1 < 0) || ((ival1 + genTypeSize(typ)) > varSize))
+                    if ((ival1 >= 0) && ((ival1 + genTypeSize(typ)) <= varSize))
                     {
-                        lvaSetVarDoNotEnregister(lclNum DEBUGARG(DNER_LocalField));
-                    }
-                    else
-                    {
-                        // Make sure we don't separately promote the fields of this struct.
-                        if (varDsc->lvRegStruct)
-                        {
-                            // We can enregister, but can't promote.
-                            varDsc->lvPromoted = false;
-                        }
-                        else
-                        {
-                            lvaSetVarDoNotEnregister(lclNum DEBUGARG(DNER_LocalField));
-                        }
-
                         // We will turn a GT_LCL_VAR into a GT_LCL_FLD with an gtLclOffs of 'ival'
                         // or if we already have a GT_LCL_FLD we will adjust the gtLclOffs by adding 'ival'
                         // Then we change the type of the GT_LCL_FLD to match the orginal GT_IND type.
@@ -17896,19 +17923,32 @@ void Compiler::fgRetypeImplicitByRefArgs()
                     fieldVarDsc->lvPrefReg = 0;
                 }
 
-                if (undoPromotion)
-                {
-                    // Hijack lvFieldLclStart to record the new temp number.
-                    // It will get fixed up in fgMarkDemotedImplicitByRefArgs.
-                    varDsc->lvFieldLclStart = newLclNum;
-                }
-                else
-                {
-                    // Unmark the parameter as promoted (it's a pointer now).
-                    varDsc->lvPromoted      = false;
-                    varDsc->lvFieldCnt      = 0;
-                    varDsc->lvFieldLclStart = 0;
-                }
+                // Hijack lvFieldLclStart to record the new temp number.
+                // It will get fixed up in fgMarkDemotedImplicitByRefArgs.
+                varDsc->lvFieldLclStart = newLclNum;
+                // Go ahead and clear lvFieldCnt -- either we're promoting
+                // a replacement temp or we're not promoting this arg, and
+                // in either case the parameter is now a pointer that doesn't
+                // have these fields.
+                varDsc->lvFieldCnt = 0;
+
+                // Hijack lvPromoted to communicate to fgMorphImplicitByRefArgs
+                // whether references to the struct should be rewritten as
+                // indirections off the pointer (not promoted) or references
+                // to the new struct local (promoted).
+                varDsc->lvPromoted = !undoPromotion;
+            }
+            else
+            {
+                // The "undo promotion" path above clears lvPromoted for args that struct
+                // promotion wanted to promote but that aren't considered profitable to
+                // rewrite.  It hijacks lvFieldLclStart to communicate to
+                // fgMarkDemotedImplicitByRefArgs that it needs to clean up annotations left
+                // on such args for fgMorphImplicitByRefArgs to consult in the interim.
+                // Here we have an arg that was simply never promoted, so make sure it doesn't
+                // have nonzero lvFieldLclStart, since that would confuse fgMorphImplicitByRefArgs
+                // and fgMarkDemotedImplicitByRefArgs.
+                assert(varDsc->lvFieldLclStart == 0);
             }
 
             // Since the parameter in this position is really a pointer, its type is TYP_BYREF.
@@ -17945,10 +17985,9 @@ void Compiler::fgRetypeImplicitByRefArgs()
 
 //------------------------------------------------------------------------
 // fgMarkDemotedImplicitByRefArgs: Clear annotations for any implicit byrefs that struct promotion
-//                                 asked to promote but for which fgRetypeImplicitByRefArgs decided
-//                                 to discard the promotion.  Appearances of these have now been
-//                                 rewritten (by fgMorphImplicitByRefArgs) using indirections from
-//                                 the pointer parameter.
+//                                 asked to promote.  Appearances of these have now been rewritten
+//                                 (by fgMorphImplicitByRefArgs) using indirections from the pointer
+//                                 parameter or references to the promotion temp, as appropriate.
 
 void Compiler::fgMarkDemotedImplicitByRefArgs()
 {
@@ -17958,45 +17997,60 @@ void Compiler::fgMarkDemotedImplicitByRefArgs()
     {
         LclVarDsc* varDsc = &lvaTable[lclNum];
 
-        if (lvaIsImplicitByRefLocal(lclNum) && varDsc->lvPromoted)
+        if (lvaIsImplicitByRefLocal(lclNum))
         {
-            // We stashed the pointer to the real promotion temp in lvFieldLclStart
-            unsigned structLclNum = varDsc->lvFieldLclStart;
+            if (varDsc->lvPromoted)
+            {
+                // The parameter is simply a pointer now, so clear lvPromoted.  It was left set
+                // by fgRetypeImplicitByRefArgs to communicate to fgMorphImplicitByRefArgs that
+                // appearances of this arg needed to be rewritten to a new promoted struct local.
+                varDsc->lvPromoted = false;
 
-            // Unmark the parameter as promoted.
-            varDsc->lvPromoted      = false;
-            varDsc->lvFieldCnt      = 0;
-            varDsc->lvFieldLclStart = 0;
-            // Clear its ref count; this was set during address-taken analysis so that
-            // call morphing could identify single-use implicit byrefs; we're done with
-            // that, and want it to be in its default state of zero when we go to set
-            // real ref counts for all variables.
-            varDsc->lvRefCnt = 0;
+                // Clear the lvFieldLclStart value that was set by fgRetypeImplicitByRefArgs
+                // to tell fgMorphImplicitByRefArgs which local is the new promoted struct one.
+                varDsc->lvFieldLclStart = 0;
+            }
+            else if (varDsc->lvFieldLclStart != 0)
+            {
+                // We created new temps to represent a promoted struct corresponding to this
+                // parameter, but decided not to go through with the promotion and have
+                // rewritten all uses as indirections off the pointer parameter.
+                // We stashed the pointer to the new struct temp in lvFieldLclStart; make
+                // note of that and clear the annotation.
+                unsigned structLclNum   = varDsc->lvFieldLclStart;
+                varDsc->lvFieldLclStart = 0;
 
-            // The temp struct is now unused; set flags appropriately so that we
-            // won't allocate space for it on the stack.
-            LclVarDsc* structVarDsc     = &lvaTable[structLclNum];
-            structVarDsc->lvRefCnt      = 0;
-            structVarDsc->lvAddrExposed = false;
+                // Clear the arg's ref count; this was set during address-taken analysis so that
+                // call morphing could identify single-use implicit byrefs; we're done with
+                // that, and want it to be in its default state of zero when we go to set
+                // real ref counts for all variables.
+                varDsc->lvRefCnt = 0;
+
+                // The temp struct is now unused; set flags appropriately so that we
+                // won't allocate space for it on the stack.
+                LclVarDsc* structVarDsc     = &lvaTable[structLclNum];
+                structVarDsc->lvRefCnt      = 0;
+                structVarDsc->lvAddrExposed = false;
 #ifdef DEBUG
-            structVarDsc->lvUnusedStruct = true;
+                structVarDsc->lvUnusedStruct = true;
 #endif // DEBUG
 
-            unsigned fieldLclStart = structVarDsc->lvFieldLclStart;
-            unsigned fieldCount    = structVarDsc->lvFieldCnt;
-            unsigned fieldLclStop  = fieldLclStart + fieldCount;
+                unsigned fieldLclStart = structVarDsc->lvFieldLclStart;
+                unsigned fieldCount    = structVarDsc->lvFieldCnt;
+                unsigned fieldLclStop  = fieldLclStart + fieldCount;
 
-            for (unsigned fieldLclNum = fieldLclStart; fieldLclNum < fieldLclStop; ++fieldLclNum)
-            {
-                // Fix the pointer to the parent local.
-                LclVarDsc* fieldVarDsc = &lvaTable[fieldLclNum];
-                assert(fieldVarDsc->lvParentLcl == lclNum);
-                fieldVarDsc->lvParentLcl = structLclNum;
+                for (unsigned fieldLclNum = fieldLclStart; fieldLclNum < fieldLclStop; ++fieldLclNum)
+                {
+                    // Fix the pointer to the parent local.
+                    LclVarDsc* fieldVarDsc = &lvaTable[fieldLclNum];
+                    assert(fieldVarDsc->lvParentLcl == lclNum);
+                    fieldVarDsc->lvParentLcl = structLclNum;
 
-                // The field local is now unused; set flags appropriately so that
-                // we won't allocate stack space for it.
-                fieldVarDsc->lvRefCnt      = 0;
-                fieldVarDsc->lvAddrExposed = false;
+                    // The field local is now unused; set flags appropriately so that
+                    // we won't allocate stack space for it.
+                    fieldVarDsc->lvRefCnt      = 0;
+                    fieldVarDsc->lvAddrExposed = false;
+                }
             }
         }
     }
@@ -18074,7 +18128,16 @@ GenTreePtr Compiler::fgMorphImplicitByRefArgs(GenTreePtr tree, bool isAddr)
         if (!varTypeIsStruct(lclVarTree))
         {
             assert(lclVarTree->TypeGet() == TYP_BYREF);
+
             return nullptr;
+        }
+        else if (lclVarDsc->lvPromoted)
+        {
+            // fgRetypeImplicitByRefArgs created a new promoted struct local to represent this
+            // arg.  Rewrite this to refer to the new local.
+            assert(lclVarDsc->lvFieldLclStart != 0);
+            lclVarTree->AsLclVarCommon()->SetLclNum(lclVarDsc->lvFieldLclStart);
+            return tree;
         }
 
         fieldHnd = nullptr;

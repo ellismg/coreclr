@@ -24,6 +24,10 @@ void genCodeForMulHi(GenTreeOp* treeNode);
 void genLeaInstruction(GenTreeAddrMode* lea);
 void genSetRegToCond(regNumber dstReg, GenTreePtr tree);
 
+#if defined(_TARGET_ARMARCH_)
+void genScaledAdd(emitAttr attr, regNumber targetReg, regNumber baseReg, regNumber indexReg, int scale);
+#endif // _TARGET_ARMARCH_
+
 #if defined(_TARGET_ARM_)
 void genCodeForMulLong(GenTreeMulLong* treeNode);
 #endif // _TARGET_ARM_
@@ -52,14 +56,6 @@ unsigned getFirstArgWithStackSlot();
 
 void genCompareFloat(GenTreePtr treeNode);
 void genCompareInt(GenTreePtr treeNode);
-
-#if !defined(_TARGET_64BIT_)
-void genCompareLong(GenTreePtr treeNode);
-#if defined(_TARGET_ARM_)
-void genJccLongHi(genTreeOps cmp, BasicBlock* jumpTrue, BasicBlock* jumpFalse, bool isUnsigned = false);
-void genJccLongLo(genTreeOps cmp, BasicBlock* jumpTrue, BasicBlock* jumpFalse);
-#endif // defined(_TARGET_ARM_)
-#endif
 
 #ifdef FEATURE_SIMD
 enum SIMDScalarMoveType
@@ -172,7 +168,8 @@ void genCodeForLclFld(GenTreeLclFld* tree);
 void genCodeForStoreLclFld(GenTreeLclFld* tree);
 void genCodeForStoreLclVar(GenTreeLclVar* tree);
 void genCodeForReturnTrap(GenTreeOp* tree);
-void genCodeForJcc(GenTreeJumpCC* tree);
+void genCodeForJcc(GenTreeCC* tree);
+void genCodeForSetcc(GenTreeCC* setcc);
 void genCodeForStoreInd(GenTreeStoreInd* tree);
 void genCodeForSwap(GenTreeOp* tree);
 void genCodeForCpObj(GenTreeObj* cpObjNode);

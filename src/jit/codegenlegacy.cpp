@@ -45,7 +45,7 @@ void CodeGen::genDyingVars(VARSET_VALARG_TP beforeSet, VARSET_VALARG_TP afterSet
     unsigned   varNum;
     LclVarDsc* varDsc;
     regMaskTP  regBit;
-    VARSET_TP  VARSET_INIT_NOCOPY(deadSet, VarSetOps::Diff(compiler, beforeSet, afterSet));
+    VARSET_TP  deadSet(VarSetOps::Diff(compiler, beforeSet, afterSet));
 
     if (VarSetOps::IsEmpty(compiler, deadSet))
         return;
@@ -5626,12 +5626,10 @@ void CodeGen::genCodeForQmark(GenTreePtr tree, regMaskTP destReg, regMaskTP best
             // If any candidates are not alive at the GT_QMARK node, then they
             // need to be spilled
 
-            VARSET_TP VARSET_INIT(compiler, rsLiveNow, compiler->compCurLife);
-            VARSET_TP VARSET_INIT_NOCOPY(rsLiveAfter, compiler->fgUpdateLiveSet(compiler->compCurLife,
-                                                                                compiler->compCurLifeTree, tree));
+            const VARSET_TP& rsLiveNow(compiler->compCurLife);
+            VARSET_TP rsLiveAfter(compiler->fgUpdateLiveSet(compiler->compCurLife, compiler->compCurLifeTree, tree));
 
-            VARSET_TP VARSET_INIT_NOCOPY(regVarLiveNow,
-                                         VarSetOps::Intersection(compiler, compiler->raRegVarsMask, rsLiveNow));
+            VARSET_TP regVarLiveNow(VarSetOps::Intersection(compiler, compiler->raRegVarsMask, rsLiveNow));
 
             VARSET_ITER_INIT(compiler, iter, regVarLiveNow, varIndex);
             while (iter.NextElem(&varIndex))
@@ -12515,7 +12513,7 @@ void CodeGen::genCodeForBBlist()
         }
 #endif // DEBUG
 
-        VARSET_TP VARSET_INIT_NOCOPY(liveSet, VarSetOps::UninitVal());
+        VARSET_TP liveSet(VarSetOps::UninitVal());
 
         regMaskTP gcrefRegs = 0;
         regMaskTP byrefRegs = 0;
@@ -13066,8 +13064,7 @@ void CodeGen::genCodeForBBlist()
                 // Load the address where the finally funclet should return into LR.
                 // The funclet prolog/epilog will do "push {lr}" / "pop {pc}" to do
                 // the return.
-                getEmitter()->emitIns_R_L(INS_movw, EA_4BYTE_DSP_RELOC, bbFinallyRet, REG_LR);
-                getEmitter()->emitIns_R_L(INS_movt, EA_4BYTE_DSP_RELOC, bbFinallyRet, REG_LR);
+                genMov32RelocatableDisplacement(bbFinallyRet, REG_LR);
                 regTracker.rsTrackRegTrash(REG_LR);
 
                 // Jump to the finally BB
@@ -13093,8 +13090,7 @@ void CodeGen::genCodeForBBlist()
 
             case BBJ_EHCATCHRET:
                 // set r0 to the address the VM should return to after the catch
-                getEmitter()->emitIns_R_L(INS_movw, EA_4BYTE_DSP_RELOC, block->bbJumpDest, REG_R0);
-                getEmitter()->emitIns_R_L(INS_movt, EA_4BYTE_DSP_RELOC, block->bbJumpDest, REG_R0);
+                genMov32RelocatableDisplacement(block->bbJumpDest, REG_R0);
                 regTracker.rsTrackRegTrash(REG_R0);
 
                 __fallthrough;
@@ -15479,8 +15475,7 @@ void CodeGen::genTableSwitch(regNumber reg, unsigned jumpCnt, BasicBlock** jumpT
     // Pick any register except the index register.
     //
     regNumber regTabBase = regSet.rsGrabReg(RBM_ALLINT & ~genRegMask(reg));
-    getEmitter()->emitIns_R_D(INS_movw, EA_HANDLE_CNS_RELOC, jmpTabBase, regTabBase);
-    getEmitter()->emitIns_R_D(INS_movt, EA_HANDLE_CNS_RELOC, jmpTabBase, regTabBase);
+    genMov32RelocatableDataLabel(jmpTabBase, regTabBase);
     regTracker.rsTrackRegTrash(regTabBase);
 
     // LDR PC, [regTableBase + reg * 4] (encoded as LDR PC, [regTableBase, reg, LSL 2]
@@ -18868,14 +18863,17 @@ regMaskTP CodeGen::genCodeForCall(GenTreeCall* call, bool valUsed)
                     compiler->info.compCompHnd->getMethodVTableOffset(call->gtCallMethHnd, &vtabOffsOfIndirection,
                                                                       &vtabOffsAfterIndirection);
 
-                    /* Get the appropriate vtable chunk */
-
                     /* The register no longer holds a live pointer value */
                     gcInfo.gcMarkRegSetNpt(vptrMask);
 
-                    // MOV vptrReg, [REG_CALL_IND_SCRATCH + vtabOffsOfIndirection]
-                    getEmitter()->emitIns_R_AR(ins_Load(TYP_I_IMPL), EA_PTRSIZE, vptrReg, vptrReg,
-                                               vtabOffsOfIndirection);
+                    /* Get the appropriate vtable chunk */
+
+                    if (vtabOffsOfIndirection != CORINFO_VIRTUALCALL_NO_CHUNK)
+                    {
+                        // MOV vptrReg, [REG_CALL_IND_SCRATCH + vtabOffsOfIndirection]
+                        getEmitter()->emitIns_R_AR(ins_Load(TYP_I_IMPL), EA_PTRSIZE, vptrReg, vptrReg,
+                                                   vtabOffsOfIndirection);
+                    }
 
                     /* Call through the appropriate vtable slot */
 
@@ -19203,15 +19201,23 @@ regMaskTP CodeGen::genCodeForCall(GenTreeCall* call, bool valUsed)
                 {
                     noway_assert(helperNum != CORINFO_HELP_UNDEF);
 
-                    void* pAddr;
-                    addr = compiler->compGetHelperFtn(helperNum, (void**)&pAddr);
-
-                    accessType = IAT_VALUE;
-
-                    if (!addr)
+                    if (call->gtEntryPoint.addr != NULL)
                     {
-                        accessType = IAT_PVALUE;
-                        addr       = pAddr;
+                        accessType = call->gtEntryPoint.accessType;
+                        addr       = call->gtEntryPoint.addr;
+                    }
+                    else
+                    {
+                        void* pAddr;
+
+                        accessType = IAT_VALUE;
+                        addr       = compiler->compGetHelperFtn(helperNum, (void**)&pAddr);
+
+                        if (!addr)
+                        {
+                            accessType = IAT_PVALUE;
+                            addr       = pAddr;
+                        }
                     }
                 }
                 else
@@ -20619,16 +20625,18 @@ GenTreePtr Compiler::fgLegacyPerStatementLocalVarLiveness(GenTreePtr startNode, 
 {
     GenTreePtr tree;
 
-    VARSET_TP VARSET_INIT(this, defSet_BeforeSplit, fgCurDefSet); // Store the current fgCurDefSet and fgCurUseSet so
-    VARSET_TP VARSET_INIT(this, useSet_BeforeSplit, fgCurUseSet); // we can restore then before entering the elseTree.
+    VARSET_TP defSet_BeforeSplit(VarSetOps::MakeCopy(this, fgCurDefSet)); // Store the current fgCurDefSet and
+                                                                          // fgCurUseSet so
+    VARSET_TP useSet_BeforeSplit(VarSetOps::MakeCopy(this, fgCurUseSet)); // we can restore then before entering the
+                                                                          // elseTree.
 
     MemoryKindSet memoryUse_BeforeSplit   = fgCurMemoryUse;
     MemoryKindSet memoryDef_BeforeSplit   = fgCurMemoryDef;
     MemoryKindSet memoryHavoc_BeforeSplit = fgCurMemoryHavoc;
 
-    VARSET_TP VARSET_INIT_NOCOPY(defSet_AfterThenTree, VarSetOps::MakeEmpty(this)); // These two variables will store
-                                                                                    // the USE and DEF sets after
-    VARSET_TP VARSET_INIT_NOCOPY(useSet_AfterThenTree, VarSetOps::MakeEmpty(this)); // evaluating the thenTree.
+    VARSET_TP defSet_AfterThenTree(VarSetOps::MakeEmpty(this)); // These two variables will store
+                                                                // the USE and DEF sets after
+    VARSET_TP useSet_AfterThenTree(VarSetOps::MakeEmpty(this)); // evaluating the thenTree.
 
     MemoryKindSet memoryUse_AfterThenTree   = fgCurMemoryUse;
     MemoryKindSet memoryDef_AfterThenTree   = fgCurMemoryDef;

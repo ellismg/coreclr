@@ -467,6 +467,7 @@ void Module::InitializeForProfiling()
     }
     else // ReadyToRun image
     {
+#ifdef FEATURE_READYTORUN
         // We already setup the m_methodProfileList in the ReadyToRunInfo constructor
         if (m_methodProfileList != nullptr)
         {
@@ -476,6 +477,7 @@ void Module::InitializeForProfiling()
             // Enable profiling if the ZapBBInstr value says to
             m_nativeImageProfiling = GetAssembly()->IsInstrumented();
         }
+#endif
     }
 
 #ifdef FEATURE_LAZY_COW_PAGES
@@ -9512,7 +9514,7 @@ void Module::Arrange(DataImage *image)
             else if (TypeFromToken(token) == mdtFieldDef)
             {
                 FieldDesc *pFD = LookupFieldDef(token);
-                if (pFD && pFD->IsILOnlyRVAField())
+                if (pFD && pFD->IsRVA())
                 {
                     if (entry->flags & (1 << RVAFieldData))
                     {
@@ -12988,7 +12990,8 @@ idTypeSpec Module::LogInstantiatedType(TypeHandle typeHnd, ULONG flagNum)
         // We can relax this if we allow a (duplicate) MethodTable to live
         // in any module (which might be needed for ngen of generics)
 #ifdef FEATURE_PREJIT
-        PRECONDITION(this == GetPreferredZapModuleForTypeHandle(typeHnd));
+        // All callsites already do this...
+        // PRECONDITION(this == GetPreferredZapModuleForTypeHandle(typeHnd));
 #endif
     }
     CONTRACT_END;
@@ -13659,7 +13662,10 @@ void LookupMapBase::CreateHotItemList(DataImage *image, CorProfileData *profileD
                 for (DWORD ii = 0; ii < numItems; ii++)
                 {
                     if (itemList[ii].value != NULL)
-                        RelativePointer<TADDR>::SetValueMaybeNullAtPtr(dac_cast<TADDR>(&itemList[ii].value), itemList[ii].value);
+                    {
+                        RelativePointer<TADDR> *pRelPtr = (RelativePointer<TADDR> *)&itemList[ii].value;
+                        pRelPtr->SetValueMaybeNull(itemList[ii].value);
+                    }
                 }
 
                 if (itemList != NULL)

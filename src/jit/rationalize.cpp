@@ -951,8 +951,8 @@ Compiler::fgWalkResult Rationalizer::RewriteNode(GenTree** useEdge, ArrayStack<G
 #endif // FEATURE_SIMD
 
         default:
-            // JCC nodes should not be present in HIR.
-            assert(node->OperGet() != GT_JCC);
+            // CMP, SETCC and JCC nodes should not be present in HIR.
+            assert(!node->OperIs(GT_CMP, GT_SETCC, GT_JCC));
             break;
     }
 
@@ -970,10 +970,19 @@ Compiler::fgWalkResult Rationalizer::RewriteNode(GenTree** useEdge, ArrayStack<G
             node->gtFlags &= ~GTF_ALL_EFFECT;
         }
     }
-    else if (!node->OperIsStore())
+    else
     {
-        // Clear the GTF_ASG flag for all nodes but stores
-        node->gtFlags &= ~GTF_ASG;
+        if (!node->OperIsStore())
+        {
+            // Clear the GTF_ASG flag for all nodes but stores
+            node->gtFlags &= ~GTF_ASG;
+        }
+
+        if (!node->IsCall())
+        {
+            // Clear the GTF_CALL flag for all nodes but calls
+            node->gtFlags &= ~GTF_CALL;
+        }
     }
 
     assert(isLateArg == ((use.Def()->gtFlags & GTF_LATE_ARG) != 0));

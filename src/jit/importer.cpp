@@ -1975,15 +1975,29 @@ GenTreePtr Compiler::impRuntimeLookupToTree(CORINFO_RESOLVED_TOKEN* pResolvedTok
                                    nullptr DEBUGARG("impRuntimeLookup slot"));
     }
 
+    GenTreePtr indOffTree = nullptr;
+
     // Applied repeated indirections
     for (WORD i = 0; i < pRuntimeLookup->indirections; i++)
     {
+        if (i == 1 && pRuntimeLookup->indirectFirstOffset)
+        {
+            indOffTree = impCloneExpr(slotPtrTree, &slotPtrTree, NO_CLASS_HANDLE, (unsigned)CHECK_SPILL_ALL,
+                                      nullptr DEBUGARG("impRuntimeLookup indirectFirstOffset"));
+        }
+
         if (i != 0)
         {
             slotPtrTree = gtNewOperNode(GT_IND, TYP_I_IMPL, slotPtrTree);
             slotPtrTree->gtFlags |= GTF_IND_NONFAULTING;
             slotPtrTree->gtFlags |= GTF_IND_INVARIANT;
         }
+
+        if (i == 1 && pRuntimeLookup->indirectFirstOffset)
+        {
+            slotPtrTree = gtNewOperNode(GT_ADD, TYP_I_IMPL, indOffTree, slotPtrTree);
+        }
+
         if (pRuntimeLookup->offsets[i] != 0)
         {
             slotPtrTree =
@@ -3710,6 +3724,38 @@ GenTreePtr Compiler::impIntrinsic(GenTreePtr            newobjThis,
             }
 
             retNode = gtNewOperNode(GT_COMMA, resultType, boundsCheck, result);
+
+            break;
+        }
+
+        case CORINFO_INTRINSIC_GetRawHandle:
+        {
+            noway_assert(IsTargetAbi(CORINFO_CORERT_ABI)); // Only CoreRT supports it.
+            CORINFO_RESOLVED_TOKEN resolvedToken;
+            resolvedToken.tokenContext = MAKE_METHODCONTEXT(info.compMethodHnd);
+            resolvedToken.tokenScope   = info.compScopeHnd;
+            resolvedToken.token        = memberRef;
+            resolvedToken.tokenType    = CORINFO_TOKENKIND_Method;
+
+            CORINFO_GENERICHANDLE_RESULT embedInfo;
+            info.compCompHnd->expandRawHandleIntrinsic(&resolvedToken, &embedInfo);
+
+            GenTreePtr rawHandle = impLookupToTree(&resolvedToken, &embedInfo.lookup, gtTokenToIconFlags(memberRef),
+                                                   embedInfo.compileTimeHandle);
+            if (rawHandle == nullptr)
+            {
+                return nullptr;
+            }
+
+            noway_assert(genTypeSize(rawHandle->TypeGet()) == genTypeSize(TYP_I_IMPL));
+
+            unsigned rawHandleSlot = lvaGrabTemp(true DEBUGARG("rawHandle"));
+            impAssignTempGen(rawHandleSlot, rawHandle, clsHnd, (unsigned)CHECK_SPILL_NONE);
+
+            GenTreePtr lclVar     = gtNewLclvNode(rawHandleSlot, TYP_I_IMPL);
+            GenTreePtr lclVarAddr = gtNewOperNode(GT_ADDR, TYP_I_IMPL, lclVar);
+            var_types  resultType = JITtype2varType(sig->retType);
+            retNode               = gtNewOperNode(GT_IND, resultType, lclVarAddr);
 
             break;
         }
@@ -6096,14 +6142,16 @@ GenTreePtr Compiler::impImportStaticFieldAccess(CORINFO_RESOLVED_TOKEN* pResolve
                 FieldSeqNode* fldSeq = GetFieldSeqStore()->CreateSingleton(pResolvedToken->hField);
 
                 /* Create the data member node */
-                if (pFldAddr == nullptr)
-                {
-                    op1 = gtNewIconHandleNode((size_t)fldAddr, GTF_ICON_STATIC_HDL, fldSeq);
-                }
-                else
-                {
-                    op1 = gtNewIconHandleNode((size_t)pFldAddr, GTF_ICON_STATIC_HDL, fldSeq);
+                op1 = gtNewIconHandleNode(pFldAddr == nullptr ? (size_t)fldAddr : (size_t)pFldAddr, GTF_ICON_STATIC_HDL,
+                                          fldSeq);
 
+                if (pFieldInfo->fieldFlags & CORINFO_FLG_FIELD_INITCLASS)
+                {
+                    op1->gtFlags |= GTF_ICON_INITCLASS;
+                }
+
+                if (pFldAddr != nullptr)
+                {
                     // There are two cases here, either the static is RVA based,
                     // in which case the type of the FIELD node is not a GC type
                     // and the handle to the RVA is a TYP_I_IMPL.  Or the FIELD node is
@@ -6672,6 +6720,11 @@ var_types Compiler::impImportCall(OPCODE                  opcode,
         {
             call = impIntrinsic(newobjThis, clsHnd, methHnd, sig, pResolvedToken->token, readonlyCall,
                                 (canTailCall && (tailCall != 0)), &intrinsicID);
+
+            if (compIsForInlining() && compInlineResult->IsFailure())
+            {
+                return callRetTyp;
+            }
 
             if (call != nullptr)
             {
